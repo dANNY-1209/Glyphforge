@@ -4,7 +4,6 @@ import path from 'path'
 import { fileURLToPath } from 'url'
 import cors from 'cors'
 import sizeOf from 'image-size'
-import bcrypt from 'bcrypt'
 import jwt from 'jsonwebtoken'
 import multer from 'multer'
 import dotenv from 'dotenv'
@@ -12,29 +11,30 @@ import ffmpeg from 'fluent-ffmpeg'
 import sharp from 'sharp'
 import http from 'http'
 import rateLimit from 'express-rate-limit'
+import { createAuthStore } from './auth-store.js'
 
 dotenv.config()
 
 // ============================================
 // REQUIRED ENVIRONMENT VARIABLES — fail-fast at startup.
-// Hard-coded fallbacks (e.g. JWT_SECRET="default-secret-key", admin/admin
-// password) are forbidden in production: a missing env value would otherwise
-// silently downgrade auth to a publicly-known credential.
+// Hard-coded fallbacks (e.g. JWT_SECRET="defaul...-key") are forbidden in
+// production: a missing env value would otherwise silently downgrade auth
+// to a publicly-known credential.
+//
+// Discord OAuth is now the only login path. SUPER_ADMIN_DISCORD_ID is the
+// bootstrap admin who can never be demoted — it's the recovery handle if
+// admins.json gets wiped.
 // ============================================
-const REQUIRED_ENV = ['ADMIN_USERNAME', 'ADMIN_PASSWORD_HASH', 'JWT_SECRET']
+const REQUIRED_ENV = [
+  'JWT_SECRET',
+  'DISCORD_CLIENT_ID',
+  'DISCORD_CLIENT_SECRET',
+  'SUPER_ADMIN_DISCORD_ID',
+]
 const __envMissing = REQUIRED_ENV.filter((k) => !process.env[k] || !String(process.env[k]).trim())
 if (__envMissing.length) {
   console.error(`[startup] FATAL: missing required environment variables: ${__envMissing.join(', ')}`)
   console.error('[startup] See .env.example for the expected configuration.')
-  process.exit(1)
-}
-// Sanity-check bcrypt hash format. Common pitfall: docker-compose env_file
-// does NOT perform $$->$ interpolation, so hashes accidentally written with
-// $$ escapes load as 63-char strings starting with $$2b — which bcrypt.compare
-// will reject silently, locking admins out.
-if (!/^\$2[aby]\$\d{2}\$.{53}$/.test(process.env.ADMIN_PASSWORD_HASH)) {
-  console.error('[startup] FATAL: ADMIN_PASSWORD_HASH is not a valid bcrypt hash (expected $2b$10$… 60 chars).')
-  console.error('[startup] If you escaped $ as $$ in .env, replace with single $.')
   process.exit(1)
 }
 
@@ -77,6 +77,14 @@ const WORKFLOW_FOLDER_PATH = config.workflowFolder
     : path.join(__dirname, config.workflowFolder.path))
   : path.join(__dirname, 'workflows')
 const WORKFLOW_FOLDER_NAME = config.workflowFolder?.name || 'workflows'
+
+// Auth data dir — whitelist / admins / requests / profiles / audit log live
+// here. Persisted across container rebuilds via the /datas bind mount.
+const AUTH_FOLDER_PATH = config.authFolder
+  ? (path.isAbsolute(config.authFolder.path)
+    ? config.authFolder.path
+    : path.join(__dirname, config.authFolder.path))
+  : path.join(__dirname, 'auth')
 
 const app = express()
 const PORT = 3001
@@ -292,6 +300,14 @@ const DISCORD_EVENT_STYLES = {
   edit_costume:  { color: 0xb37726, emoji: '✏️', label: 'Costume' },
   edit_workflow: { color: 0x269173, emoji: '✏️', label: 'Workflow' },
   edit_request:  { color: 0xb38f00, emoji: '✏️', label: 'Request' },
+  // Whitelist + admin lifecycle events
+  whitelist_request:    { color: 0xffcc66, emoji: '🙋', label: 'Whitelist Request' },
+  whitelist_approve:    { color: 0x33cc66, emoji: '✅', label: 'Whitelist Approved' },
+  whitelist_deny:       { color: 0xcc4444, emoji: '⛔', label: 'Whitelist Denied' },
+  whitelist_add_direct: { color: 0x33cc66, emoji: '➕', label: 'Whitelist Added' },
+  whitelist_revoke:     { color: 0xcc4444, emoji: '🚫', label: 'Whitelist Revoked' },
+  admin_promote:        { color: 0xffd633, emoji: '👑', label: 'Admin Promoted' },
+  admin_demote:         { color: 0x999999, emoji: '⬇️', label: 'Admin Demoted' },
   test:          { color: 0x808080, emoji: '🧪', label: 'Test' },
 }
 
@@ -381,11 +397,43 @@ function buildDiscordEmbed(eventType, data) {
   let url = PUBLIC_BASE_URL || undefined
   let embed_image_url = ''
 
+  // Auth lifecycle events (whitelist requests, approval, admin promotion).
+  // `data.target` is either a request object or { discordId, profile }.
+  // `data.reviewer` is the admin who acted (omit on self-submit events).
+  const isAuthEvent = typeof eventType === 'string' &&
+    (eventType.startsWith('whitelist_') || eventType.startsWith('admin_'))
+  if (isAuthEvent) {
+    const target = data.target || data
+    const profile = target.profile || data.profile || {
+      username: data.username, globalName: data.globalName, avatar: data.avatar,
+    }
+    const targetId = target.discordId || data.discordId || 'unknown'
+    const handle = (profile && (profile.globalName || profile.username)) || targetId
+    title = `${style.emoji} ${style.label}: ${handle}`
+    const descLines = []
+    descLines.push(`**Discord ID:** \`${targetId}\``)
+    if (data.reason || target.reason) {
+      const r = String(data.reason || target.reason).slice(0, 400)
+      descLines.push(`**Reason:** ${r}`)
+    }
+    if (data.note || target.reviewNote) {
+      descLines.push(`**Note:** ${String(data.note || target.reviewNote).slice(0, 300)}`)
+    }
+    if (data.reviewer && (data.reviewer.username || data.reviewer.globalName)) {
+      descLines.push(`**By:** ${data.reviewer.globalName || data.reviewer.username}`)
+    }
+    if (eventType === 'whitelist_revoke' && data.demoted) {
+      descLines.push('_Also demoted from admin._')
+    }
+    description = descLines.join('\n')
+    if (profile && profile.avatar && targetId !== 'unknown') {
+      embed_image_url = `https://cdn.discordapp.com/avatars/${targetId}/${profile.avatar}.png?size=128`
+    }
+  } else
   // Edit events share a single rendering path: title shows the resource label
   // + identifier, description is either the admin-supplied note or an
   // auto-generated "Changed: a, b, c" line based on `changedFields`.
-  const isEdit = typeof eventType === 'string' && eventType.startsWith('edit_')
-  if (isEdit) {
+  if (typeof eventType === 'string' && eventType.startsWith('edit_')) {
     const name =
       data.title ||
       data.name ||
@@ -503,6 +551,106 @@ function sendDiscordNotification(eventType, data) {
     })
 }
 
+// AUTHENTICATION — Discord OAuth only
+// ============================================
+// All login goes through Discord OAuth (see /api/auth/discord{,/callback}
+// further down). Admin status is derived from auth-store: a user is admin
+// iff their Discord ID is the SUPER_ADMIN_DISCORD_ID env value OR present
+// in admins.json. The legacy bcrypt password login is GONE.
+//
+// Three middlewares stack:
+//   requireLogin     — any valid Discord JWT (used for /me, request submit,
+//                      whitelist self-request endpoints).
+//   requireWhitelist — login + isWhitelisted (gates non-LoRA reads).
+//   requireAdmin     — login + isAdmin (gates all writes).
+//
+// Each request re-derives auth flags from auth-store (with the 60s cache)
+// so revocation is effective without waiting for token expiry.
+
+const authStore = createAuthStore({
+  authDir: AUTH_FOLDER_PATH,
+  writeJsonAtomic,
+  sendDiscordNotification,
+})
+
+// Extract Discord JWT from Authorization header. Returns the decoded
+// payload (which has at least `discordId`) or null. Never throws.
+function parseDiscordJwt(req) {
+  const header = req.headers.authorization
+  if (!header || !header.startsWith('Bearer ')) return null
+  const token = header.slice(7)
+  try {
+    return jwt.verify(token, process.env.JWT_SECRET)
+  } catch {
+    return null
+  }
+}
+
+// Populate req.auth = { user, flags } when a valid token is present.
+// Does not reject; downstream middlewares decide.
+function attachAuth(req, _res, next) {
+  const decoded = parseDiscordJwt(req)
+  if (decoded && decoded.discordId) {
+    const flags = authStore.getAuthFlags(decoded.discordId)
+    req.auth = {
+      user: {
+        discordId: decoded.discordId,
+        username: decoded.username,
+        globalName: decoded.globalName,
+        avatar: decoded.avatar,
+      },
+      ...flags,
+    }
+  } else {
+    req.auth = null
+  }
+  next()
+}
+app.use(attachAuth)
+
+function requireLogin(req, res, next) {
+  if (!req.auth) return res.status(401).json({ error: 'Login required' })
+  return next()
+}
+
+function requireWhitelist(req, res, next) {
+  if (!req.auth) return res.status(401).json({ error: 'Login required' })
+  if (!req.auth.isWhitelisted) {
+    return res.status(403).json({ error: 'Whitelist approval required', needsWhitelist: true })
+  }
+  return next()
+}
+
+function requireAdmin(req, res, next) {
+  if (!req.auth) return res.status(401).json({ error: 'Login required' })
+  if (!req.auth.isAdmin) return res.status(403).json({ error: 'Admin required' })
+  return next()
+}
+
+// Legacy aliases used by older route definitions in this file. Both now
+// resolve to admin gating — every write path requires admin.
+const authMiddleware = requireAdmin
+const verifyToken = requireAdmin
+
+// Per-IP+per-Discord rate limit for the self-service whitelist request
+// endpoint. Keep it sane: spam-protection only, not a hard cap.
+const requestAccessLimiter = rateLimit({
+  windowMs: 24 * 60 * 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => {
+    if (req.auth?.discordId) return `discord:${req.auth.discordId}`
+    return req.ip
+  },
+  message: { error: 'Too many access requests; try again later.' },
+})
+
+// ============================================
+// END AUTHENTICATION SETUP
+// ============================================
+
+
 // Send webhook notification for new requests
 async function sendWebhookNotification(eventType, data) {
   if (!WEBHOOK_ENABLED || !WEBHOOK_URL) {
@@ -598,16 +746,18 @@ const galleryOptions = {
   immutable: false     // Allow revalidation
 }
 
-// Static file service - serve images from configured folder with caching
-app.use(`/${PROMPT_FOLDER_NAME}`, express.static(PROMPT_FOLDER_PATH, staticOptions))
+// Static file service - serve images from configured folder with caching.
+// Whitelist gate: image paths under non-LoRA folders require login + whitelist.
+// LoRA images stay public (matches the "anon sees only LoRA" rule).
+app.use(`/${PROMPT_FOLDER_NAME}`, requireWhitelist, express.static(PROMPT_FOLDER_PATH, staticOptions))
 if (COSTUME_FOLDER_PATH) {
-  app.use(`/${COSTUME_FOLDER_NAME}`, express.static(COSTUME_FOLDER_PATH, staticOptions))
+  app.use(`/${COSTUME_FOLDER_NAME}`, requireWhitelist, express.static(COSTUME_FOLDER_PATH, staticOptions))
 }
 app.use(`/${LORA_FOLDER_NAME}`, express.static(LORA_FOLDER_PATH, staticOptions))
-app.use(`/${GALLERY_FOLDER_NAME}`, express.static(GALLERY_FOLDER_PATH, galleryOptions))
+app.use(`/${GALLERY_FOLDER_NAME}`, requireWhitelist, express.static(GALLERY_FOLDER_PATH, galleryOptions))
 
 // API route - get all prompt data
-app.get('/api/prompts', async (req, res) => {
+app.get('/api/prompts', requireWhitelist, async (req, res) => {
   try {
     const folders = fs.readdirSync(PROMPT_FOLDER_PATH).filter(file => {
       return fs.statSync(path.join(PROMPT_FOLDER_PATH, file)).isDirectory()
@@ -707,7 +857,7 @@ app.get('/api/prompts', async (req, res) => {
 })
 
 // API route - get all costume data
-app.get('/api/costumes', async (req, res) => {
+app.get('/api/costumes', requireWhitelist, async (req, res) => {
   if (!COSTUME_FOLDER_PATH) {
     return res.json([])
   }
@@ -1365,7 +1515,7 @@ app.post('/api/loras/:id/download', counterLimiter, (req, res) => {
 // ============================================
 
 // API route - get all functional LoRAs
-app.get('/api/fn-loras', async (req, res) => {
+app.get('/api/fn-loras', requireWhitelist, async (req, res) => {
   try {
     const fnLoraFolderPath = path.join(LORA_FOLDER_PATH, 'functional')
 
@@ -2189,7 +2339,7 @@ app.delete('/api/loras/:id/safetensors/:filename', authMiddleware, (req, res) =>
 })
 
 // API route - get statistics
-app.get('/api/statistics', (req, res) => {
+app.get('/api/statistics', requireWhitelist, (req, res) => {
   try {
     // Get sensitivity filter from query params (sfw, nsfw, all)
     const sensitivityFilter = req.query.sensitivity || 'all'
@@ -2399,58 +2549,6 @@ app.get('/api/config', (req, res) => {
 })
 
 // ============================================
-// GALLERY FEATURE - Authentication & APIs
-// ============================================
-
-// Authentication middleware
-function authMiddleware(req, res, next) {
-  const token = req.headers.authorization?.split(' ')[1]
-
-  if (!token) {
-    return res.status(401).json({ error: 'Unauthorized' })
-  }
-
-  try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET)
-    req.admin = decoded
-    next()
-  } catch (error) {
-    return res.status(401).json({ error: 'Invalid token' })
-  }
-}
-
-// Alias for backwards compatibility
-const verifyToken = authMiddleware
-
-// Admin login endpoint
-app.post('/api/gallery/admin/login', loginLimiter, async (req, res) => {
-  try {
-    const { username, password } = req.body
-
-    if (username !== process.env.ADMIN_USERNAME) {
-      return res.status(401).json({ error: 'Invalid credentials' })
-    }
-
-    const passwordHash = process.env.ADMIN_PASSWORD_HASH
-    const isValid = await bcrypt.compare(password, passwordHash)
-
-    if (!isValid) {
-      return res.status(401).json({ error: 'Invalid credentials' })
-    }
-
-    const token = jwt.sign(
-      { username, role: 'admin' },
-      process.env.JWT_SECRET,
-      { expiresIn: process.env.JWT_EXPIRES_IN || '24h' }
-    )
-
-    res.json({ token, expiresIn: process.env.JWT_EXPIRES_IN || '24h' })
-  } catch (error) {
-    console.error('Login error:', error)
-    res.status(500).json({ error: 'Login failed' })
-  }
-})
-
 // ===============================================
 // PROMPT ADMIN APIs
 // ===============================================
@@ -2512,7 +2610,7 @@ app.post('/api/prompts', authMiddleware, (req, res) => {
 })
 
 // API route - get unique field values for prompts
-app.get('/api/prompts/fields', (req, res) => {
+app.get('/api/prompts/fields', requireWhitelist, (req, res) => {
   try {
     const folders = fs.readdirSync(PROMPT_FOLDER_PATH).filter(file => {
       return fs.statSync(path.join(PROMPT_FOLDER_PATH, file)).isDirectory()
@@ -2760,7 +2858,7 @@ const upload = multer({
 })
 
 // API route - get all static galleries
-app.get('/api/gallery/static', async (req, res) => {
+app.get('/api/gallery/static', requireWhitelist, async (req, res) => {
   try {
     const staticPath = path.join(GALLERY_FOLDER_PATH, 'static')
 
@@ -2830,7 +2928,7 @@ app.get('/api/gallery/static', async (req, res) => {
 })
 
 // API route - get all video galleries
-app.get('/api/gallery/video', async (req, res) => {
+app.get('/api/gallery/video', requireWhitelist, async (req, res) => {
   try {
     const videoPath = path.join(GALLERY_FOLDER_PATH, 'video')
 
@@ -2895,7 +2993,7 @@ app.get('/api/gallery/video', async (req, res) => {
 })
 
 // API route - get all story galleries (list view)
-app.get('/api/gallery/story', async (req, res) => {
+app.get('/api/gallery/story', requireWhitelist, async (req, res) => {
   try {
     const storyPath = path.join(GALLERY_FOLDER_PATH, 'story')
 
@@ -2964,7 +3062,7 @@ app.get('/api/gallery/story', async (req, res) => {
 })
 
 // API route - get specific story with pages
-app.get('/api/gallery/story/:id', async (req, res) => {
+app.get('/api/gallery/story/:id', requireWhitelist, async (req, res) => {
   try {
     const { id } = req.params
     const storyPath = path.join(GALLERY_FOLDER_PATH, 'story', id)
@@ -3298,7 +3396,7 @@ app.put('/api/gallery/admin/:type/:id/reorder', validatePathParams(['id']), auth
 const NOTIFICATIONS_FILE = path.join(path.dirname(PROMPT_FOLDER_PATH), 'notifications.json')
 
 // Get notifications
-app.get('/api/notifications', (req, res) => {
+app.get('/api/notifications', requireWhitelist, (req, res) => {
   try {
     if (!fs.existsSync(NOTIFICATIONS_FILE)) {
       return res.json({ version: 0, updates: [] })
@@ -3354,7 +3452,7 @@ app.post('/api/notifications', authMiddleware, (req, res) => {
 })
 
 // API route - get metadata with last modified timestamps
-app.get('/api/metadata', (req, res) => {
+app.get('/api/metadata', requireWhitelist, (req, res) => {
   try {
     const metadata = {
       prompts: { lastModified: 0 },
@@ -3453,7 +3551,7 @@ const ensureRequestDir = () => {
 }
 
 // Get all requests
-app.get('/api/requests', (req, res) => {
+app.get('/api/requests', requireWhitelist, (req, res) => {
   try {
     ensureRequestDir()
 
@@ -3897,7 +3995,7 @@ const workflowUpload = multer({
 })
 
 // Get all workflows
-app.get('/api/workflows', (req, res) => {
+app.get('/api/workflows', requireWhitelist, (req, res) => {
   try {
     ensureWorkflowDir()
 
@@ -4164,7 +4262,7 @@ app.delete('/api/workflows/:id/file/:filename', authMiddleware, (req, res) => {
 })
 
 // Download file from workflow
-app.get('/api/workflows/:id/download/:filename', (req, res) => {
+app.get('/api/workflows/:id/download/:filename', requireWhitelist, (req, res) => {
   try {
     const { id, filename } = req.params
     if (!requireSlug('id', id, res)) return
@@ -4253,7 +4351,30 @@ app.get('/api/auth/discord/callback', async (req, res) => {
 
     const userData = await userResponse.json()
 
-    // Create a JWT token with Discord user info
+    // Persist profile (used by admin UI to show friendly username/avatar)
+    try {
+      authStore.upsertProfile({
+        discordId: userData.id,
+        username: userData.username,
+        globalName: userData.global_name || userData.username,
+        avatar: userData.avatar,
+      })
+    } catch (err) {
+      console.error('[auth] profile upsert failed:', err.message)
+    }
+
+    // Audit
+    const flags = authStore.getAuthFlags(userData.id)
+    authStore.audit('login', {
+      discordId: userData.id,
+      username: userData.username,
+      isWhitelisted: flags.isWhitelisted,
+      isAdmin: flags.isAdmin,
+    })
+
+    // Create a JWT token with Discord user info. Flags are NOT embedded —
+    // attachAuth re-derives them from auth-store on every request so
+    // promote/demote/revoke take effect within the cache TTL (60s).
     const discordToken = jwt.sign(
       {
         discordId: userData.id,
@@ -4273,25 +4394,239 @@ app.get('/api/auth/discord/callback', async (req, res) => {
   }
 })
 
-// Verify Discord token and get user info
+// Verify Discord token and get user info + live auth flags.
+// Frontend calls this on app boot (with stored token) to know what the
+// user sees. Flags come from auth-store, not the JWT, so promote/revoke
+// is effective immediately.
 app.get('/api/auth/discord/me', (req, res) => {
-  const authHeader = req.headers.authorization
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return res.status(401).json({ error: 'No token provided' })
-  }
+  if (!req.auth) return res.status(401).json({ error: 'Invalid or missing token' })
+  res.json({
+    discordId: req.auth.user.discordId,
+    username: req.auth.user.username,
+    globalName: req.auth.user.globalName,
+    avatar: req.auth.user.avatar,
+    isWhitelisted: req.auth.isWhitelisted,
+    isAdmin: req.auth.isAdmin,
+    isSuperAdmin: req.auth.isSuperAdmin,
+  })
+})
 
-  const token = authHeader.split(' ')[1]
+// Alias matching the plan's naming, same payload as /api/auth/discord/me.
+app.get('/api/auth/me', (req, res) => {
+  if (!req.auth) return res.status(401).json({ error: 'Login required' })
+  res.json({
+    discordId: req.auth.user.discordId,
+    username: req.auth.user.username,
+    globalName: req.auth.user.globalName,
+    avatar: req.auth.user.avatar,
+    isWhitelisted: req.auth.isWhitelisted,
+    isAdmin: req.auth.isAdmin,
+    isSuperAdmin: req.auth.isSuperAdmin,
+  })
+})
 
+// ============================================
+// Whitelist self-request flow
+// ============================================
+
+// Submit (or re-submit after rejection) a request to be whitelisted.
+// Body: { reason: string }
+app.post('/api/auth/whitelist-request', requireLogin, requestAccessLimiter, (req, res) => {
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET)
-    res.json({
-      discordId: decoded.discordId,
-      username: decoded.username,
-      globalName: decoded.globalName,
-      avatar: decoded.avatar
+    if (req.auth.isWhitelisted) {
+      return res.status(400).json({ error: 'Already whitelisted', alreadyWhitelisted: true })
+    }
+    const reason = String(req.body?.reason || '').trim()
+    const newReq = authStore.createRequest({ discordId: req.auth.discordId, reason })
+    authStore.audit('whitelist_request_submit', {
+      discordId: req.auth.discordId, username: req.auth.user.username, requestId: newReq.id,
     })
-  } catch (error) {
-    res.status(401).json({ error: 'Invalid token' })
+    sendDiscordNotification('whitelist_request', {
+      discordId: req.auth.discordId,
+      username: req.auth.user.username,
+      globalName: req.auth.user.globalName,
+      avatar: req.auth.user.avatar,
+      reason: newReq.reason,
+      requestId: newReq.id,
+    })
+    res.status(201).json(newReq)
+  } catch (err) {
+    if (err.code === 'PENDING_EXISTS') {
+      return res.status(409).json({ error: 'A pending request already exists', pendingExists: true })
+    }
+    if (err.code === 'ALREADY_WHITELISTED') {
+      return res.status(400).json({ error: 'Already whitelisted', alreadyWhitelisted: true })
+    }
+    console.error('[auth] whitelist-request submit failed:', err)
+    res.status(500).json({ error: 'Failed to submit access request' })
+  }
+})
+
+// Get the caller's most recent request (any status). null if none.
+app.get('/api/auth/whitelist-request/mine', requireLogin, (req, res) => {
+  const all = authStore.listRequests()
+  const mine = all
+    .filter((r) => r.discordId === req.auth.discordId)
+    .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''))
+  res.json(mine[0] || null)
+})
+
+// Cancel a still-pending request.
+app.delete('/api/auth/whitelist-request/mine', requireLogin, (req, res) => {
+  try {
+    const pending = authStore.findPendingByUser(req.auth.discordId)
+    if (!pending) return res.status(404).json({ error: 'No pending request' })
+    authStore.cancelRequest({ requestId: pending.id, discordId: req.auth.discordId })
+    authStore.audit('whitelist_request_cancel', { discordId: req.auth.discordId, requestId: pending.id })
+    res.json({ success: true })
+  } catch (err) {
+    console.error('[auth] whitelist-request cancel failed:', err)
+    res.status(500).json({ error: 'Cancel failed' })
+  }
+})
+
+// ============================================
+// Admin user management
+// ============================================
+
+// Combined user view: each entry is { discordId, profile, isAdmin,
+// isSuperAdmin, isWhitelisted, addedVia? }. Sorted: super-admin first,
+// then admins, then plain whitelist.
+app.get('/api/admin/users', requireAdmin, (req, res) => {
+  const whitelist = authStore.loadWhitelist().discord
+  const adminList = authStore.loadAdmins().discord
+  const superId = authStore.getSuperAdminId()
+  const ids = new Set([...whitelist, ...adminList])
+  if (superId) ids.add(superId)
+  const profiles = authStore.loadProfiles().discord
+  const out = []
+  for (const id of ids) {
+    out.push({
+      discordId: id,
+      profile: profiles[id] || null,
+      isSuperAdmin: id === superId,
+      isAdmin: id === superId || adminList.includes(id),
+      isWhitelisted: id === superId || adminList.includes(id) || whitelist.includes(id),
+    })
+  }
+  out.sort((a, b) => {
+    if (a.isSuperAdmin !== b.isSuperAdmin) return a.isSuperAdmin ? -1 : 1
+    if (a.isAdmin !== b.isAdmin) return a.isAdmin ? -1 : 1
+    return a.discordId.localeCompare(b.discordId)
+  })
+  res.json({ users: out })
+})
+
+// List pending requests (most recent first).
+app.get('/api/admin/whitelist-requests', requireAdmin, (req, res) => {
+  const all = authStore.listRequests()
+  const status = req.query.status ? String(req.query.status) : null
+  const filtered = status ? all.filter((r) => r.status === status) : all
+  filtered.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''))
+  res.json({ requests: filtered })
+})
+
+function reviewHandler(decision) {
+  return (req, res) => {
+    try {
+      const { id } = req.params
+      const note = String(req.body?.note || '').trim() || undefined
+      const reviewed = authStore.reviewRequest({
+        requestId: id,
+        status: decision,
+        reviewerId: req.auth.discordId,
+        reviewNote: note,
+      })
+      authStore.audit(`whitelist_request_${decision}`, {
+        requestId: id, target: reviewed.discordId, by: req.auth.discordId, note,
+      })
+      sendDiscordNotification(decision === 'approved' ? 'whitelist_approve' : 'whitelist_deny', {
+        target: reviewed,
+        reviewer: req.auth.user,
+        note,
+      })
+      res.json(reviewed)
+    } catch (err) {
+      if (err.code === 'NOT_FOUND') return res.status(404).json({ error: 'Request not found' })
+      if (err.code === 'NOT_PENDING') return res.status(409).json({ error: err.message })
+      console.error('[auth] review failed:', err)
+      res.status(500).json({ error: 'Review failed' })
+    }
+  }
+}
+app.post('/api/admin/whitelist-requests/:id/approve', requireAdmin, reviewHandler('approved'))
+app.post('/api/admin/whitelist-requests/:id/deny', requireAdmin, reviewHandler('denied'))
+
+// Manually add to whitelist (bypass request flow).
+app.post('/api/admin/whitelist', requireAdmin, (req, res) => {
+  const discordId = String(req.body?.discordId || '').trim()
+  if (!/^\d{17,20}$/.test(discordId)) {
+    return res.status(400).json({ error: 'Invalid Discord ID' })
+  }
+  const added = authStore.addWhitelist(discordId)
+  authStore.audit('whitelist_add_direct', { target: discordId, by: req.auth.discordId, alreadyPresent: !added })
+  sendDiscordNotification('whitelist_add_direct', {
+    target: { discordId, profile: authStore.getProfile(discordId) },
+    reviewer: req.auth.user,
+  })
+  res.json({ success: true, added })
+})
+
+// Revoke whitelist. Also demotes from admin if applicable.
+app.delete('/api/admin/whitelist/:discordId', requireAdmin, (req, res) => {
+  const discordId = String(req.params.discordId).trim()
+  if (authStore.isSuperAdmin(discordId)) {
+    return res.status(403).json({ error: 'Cannot revoke super-admin' })
+  }
+  let demoted = false
+  try { demoted = authStore.demoteAdmin(discordId) } catch { /* ignore */ }
+  const removed = authStore.removeWhitelist(discordId)
+  authStore.audit('whitelist_revoke', { target: discordId, by: req.auth.discordId, removed, demoted })
+  sendDiscordNotification('whitelist_revoke', {
+    target: { discordId, profile: authStore.getProfile(discordId) },
+    reviewer: req.auth.user,
+    demoted,
+  })
+  res.json({ success: true, removed, demoted })
+})
+
+// Promote a whitelisted user to admin (auto-adds to whitelist if missing).
+app.post('/api/admin/admins', requireAdmin, (req, res) => {
+  const discordId = String(req.body?.discordId || '').trim()
+  if (!/^\d{17,20}$/.test(discordId)) {
+    return res.status(400).json({ error: 'Invalid Discord ID' })
+  }
+  try {
+    const promoted = authStore.promoteAdmin(discordId)
+    authStore.audit('admin_promote', { target: discordId, by: req.auth.discordId, alreadyAdmin: !promoted })
+    sendDiscordNotification('admin_promote', {
+      target: { discordId, profile: authStore.getProfile(discordId) },
+      reviewer: req.auth.user,
+    })
+    res.json({ success: true, promoted })
+  } catch (err) {
+    console.error('[auth] promote failed:', err)
+    res.status(500).json({ error: 'Promote failed' })
+  }
+})
+
+// Demote — refuses super-admin.
+app.delete('/api/admin/admins/:discordId', requireAdmin, (req, res) => {
+  const discordId = String(req.params.discordId).trim()
+  try {
+    const demoted = authStore.demoteAdmin(discordId)
+    authStore.audit('admin_demote', { target: discordId, by: req.auth.discordId, demoted })
+    sendDiscordNotification('admin_demote', {
+      target: { discordId, profile: authStore.getProfile(discordId) },
+      reviewer: req.auth.user,
+    })
+    res.json({ success: true, demoted })
+  } catch (err) {
+    if (err.message === 'Cannot demote the super-admin') {
+      return res.status(403).json({ error: err.message })
+    }
+    console.error('[auth] demote failed:', err)
+    res.status(500).json({ error: 'Demote failed' })
   }
 })
 

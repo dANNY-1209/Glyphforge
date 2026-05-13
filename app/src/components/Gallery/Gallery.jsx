@@ -3,7 +3,6 @@ import AlbumGrid from './AlbumGrid'
 import StaticViewer from './Viewers/StaticViewer'
 import VideoViewer from './Viewers/VideoViewer'
 import StoryViewer from './Viewers/StoryViewer'
-import AdminLogin from './Admin/AdminLogin'
 import AdminPanel from './Admin/AdminPanel'
 import { useDataCache } from '../../hooks/useDataCache'
 import './Gallery.css'
@@ -11,14 +10,13 @@ import './Gallery.css'
 // Feature flag to enable/disable Story Gallery
 const ENABLE_STORY_GALLERY = false
 
-function Gallery({ sensitivityFilter, isLoggedIn, adminMode, onAdminLoginSuccess, onAdminLogout, onAdminModeToggle }) {
+function Gallery({ sensitivityFilter, isLoggedIn, adminMode, onAdminLogout, onAdminModeToggle }) {
   const [activeCategory, setActiveCategory] = useState(() => {
     // Load from localStorage, default to 'static' for new users
     return localStorage.getItem('galleryCategory') || 'static'
   })
   const [selectedAlbum, setSelectedAlbum] = useState(null)
   const [selectedType, setSelectedType] = useState(null)
-  const [showLogin, setShowLogin] = useState(false)
 
   // Use data cache hooks for each category (lazy loading - only load when needed)
   const staticCache = useDataCache(
@@ -147,14 +145,7 @@ function Gallery({ sensitivityFilter, isLoggedIn, adminMode, onAdminLoginSuccess
         console.log('👀 Exiting admin mode, refreshing cache...')
         handleRefresh()
       }
-    } else {
-      setShowLogin(true)
     }
-  }
-
-  const handleLoginSuccess = (token) => {
-    onAdminLoginSuccess(token)
-    setShowLogin(false)
   }
 
   const handleLogout = () => {
@@ -255,14 +246,6 @@ function Gallery({ sensitivityFilter, isLoggedIn, adminMode, onAdminLoginSuccess
           </>
         )}
       </div>
-
-      {/* Admin Login Modal */}
-      {showLogin && (
-        <AdminLogin
-          onLoginSuccess={handleLoginSuccess}
-          onClose={() => setShowLogin(false)}
-        />
-      )}
     </div>
   )
 }

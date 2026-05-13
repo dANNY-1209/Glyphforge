@@ -3435,3 +3435,204 @@ label {
   color: var(--text-secondary, rgba(255, 255, 255, 0.4));
   opacity: 0.7;
 }
+
+/* ============================================================
+ * Auth widget (header) — drop-in replacement for the old admin
+ * password toggle.
+ * ============================================================ */
+.auth-widget {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.user-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px 4px 4px;
+  border-radius: 16px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-hover, rgba(255,255,255,0.12));
+  cursor: pointer;
+  color: var(--text-primary);
+}
+.user-chip:hover { border-color: var(--accent-primary, #66ccff); }
+.user-chip-avatar {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+.user-chip-avatar-fallback {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-tertiary, rgba(255,255,255,0.08));
+}
+.user-chip-name {
+  font-size: 0.85rem;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.user-chip-badge {
+  background: #ffb84d;
+  color: #000;
+  font-weight: 700;
+  font-size: 0.7rem;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.auth-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 220px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-hover, rgba(255,255,255,0.12));
+  border-radius: 8px;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.4);
+  z-index: 1000;
+  overflow: hidden;
+}
+.auth-menu-header {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border-hover, rgba(255,255,255,0.08));
+}
+.auth-menu-name { font-weight: 600; }
+.auth-menu-id { font-size: 0.75rem; color: var(--text-secondary, rgba(255,255,255,0.55)); margin-top: 2px; }
+.auth-menu-flags { margin-top: 6px; }
+.auth-flag {
+  display: inline-block;
+  font-size: 0.7rem;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-weight: 600;
+}
+.flag-super { background: rgba(255, 214, 51, 0.15); color: #ffd633; }
+.flag-admin { background: rgba(102, 204, 255, 0.15); color: #66ccff; }
+.flag-member { background: rgba(51, 204, 102, 0.15); color: #33cc66; }
+.flag-pending { background: rgba(255, 184, 77, 0.15); color: #ffb84d; }
+.auth-menu-item {
+  width: 100%;
+  text-align: left;
+  padding: 10px 12px;
+  background: none;
+  border: none;
+  color: var(--text-primary);
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+.auth-menu-item:hover { background: var(--bg-tertiary, rgba(255,255,255,0.06)); }
+
+/* ============================================================
+ * Access gate (shown inside locked tabs when user is not whitelisted)
+ * ============================================================ */
+.access-gate {
+  max-width: 480px;
+  margin: 60px auto;
+  padding: 30px;
+  text-align: center;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-hover, rgba(255,255,255,0.12));
+  border-radius: 12px;
+}
+.access-gate-icon { font-size: 3rem; margin-bottom: 10px; }
+.access-gate h2 { margin: 6px 0 12px; }
+.access-gate p { color: var(--text-secondary, rgba(255,255,255,0.65)); margin-bottom: 16px; }
+.access-gate-reason {
+  background: var(--bg-tertiary, rgba(255,255,255,0.04));
+  border-left: 3px solid var(--accent-primary, #66ccff);
+  padding: 8px 12px;
+  text-align: left;
+  margin: 12px 0;
+  border-radius: 4px;
+}
+.access-gate-reason p { margin: 4px 0 0; color: var(--text-primary); }
+.access-gate-form { display: flex; flex-direction: column; gap: 10px; align-items: stretch; }
+.access-gate-form textarea {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-hover, rgba(255,255,255,0.12));
+  color: var(--text-primary);
+  border-radius: 6px;
+  padding: 10px 12px;
+  font-size: 0.9rem;
+  font-family: inherit;
+  resize: vertical;
+}
+.access-gate-form textarea:focus { outline: none; border-color: var(--accent-primary, #66ccff); }
+.access-gate-cta {
+  background: var(--accent-primary, #66ccff);
+  color: #04263a;
+  border: none;
+  border-radius: 8px;
+  padding: 10px 18px;
+  font-weight: 600;
+  cursor: pointer;
+  font-size: 0.95rem;
+}
+.access-gate-cta:hover { filter: brightness(1.1); }
+.access-gate-cta.secondary { background: var(--bg-tertiary, rgba(255,255,255,0.06)); color: var(--text-primary); }
+.access-gate-warning { background: rgba(204, 68, 68, 0.1); border: 1px solid rgba(204,68,68,0.3); color: #ff9999; padding: 10px; border-radius: 6px; margin-bottom: 10px; }
+.access-gate-note { background: rgba(255,255,255,0.04); padding: 10px; border-radius: 6px; margin-bottom: 10px; color: var(--text-secondary); }
+.access-gate-error { color: #ff9999; font-size: 0.85rem; }
+
+/* ============================================================
+ * Admin users panel
+ * ============================================================ */
+.admin-users-panel { max-width: 900px; margin: 24px auto; padding: 20px; }
+.admin-users-panel h2 { margin-top: 28px; margin-bottom: 12px; }
+.admin-users-panel .muted { color: var(--text-secondary, rgba(255,255,255,0.55)); font-weight: normal; }
+.admin-users-panel .small { font-size: 0.8rem; }
+.add-direct-form { display: flex; gap: 8px; margin-bottom: 14px; }
+.add-direct-form input {
+  flex: 1;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-hover, rgba(255,255,255,0.12));
+  color: var(--text-primary);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-family: inherit;
+}
+.request-list, .user-list { list-style: none; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.request-card, .user-card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-hover, rgba(255,255,255,0.10));
+  border-radius: 8px;
+  padding: 12px 14px;
+}
+.request-card-head, .user-card-head { display: flex; gap: 12px; align-items: center; }
+.request-card-head .avatar, .user-card-head .avatar { width: 40px; height: 40px; border-radius: 50%; object-fit: cover; }
+.request-card .name, .user-card .name { font-weight: 600; }
+.request-card blockquote { margin: 8px 0 8px 52px; padding: 6px 10px; border-left: 3px solid var(--accent-primary, #66ccff); background: var(--bg-tertiary, rgba(255,255,255,0.03)); }
+.request-card .actions, .user-card .actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+.request-card .actions button, .user-card .actions button, .add-direct-form button {
+  background: var(--bg-tertiary, rgba(255,255,255,0.08));
+  border: 1px solid var(--border-hover, rgba(255,255,255,0.15));
+  color: var(--text-primary);
+  border-radius: 6px;
+  padding: 6px 12px;
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+.request-card .actions button:hover, .user-card .actions button:hover { border-color: var(--accent-primary, #66ccff); }
+.request-card .actions button.danger, .user-card .actions button.danger { color: #ff9999; }
+.request-card .actions button.danger:hover, .user-card .actions button.danger:hover { border-color: #ff5555; }
+.badge {
+  display: inline-block;
+  font-size: 0.7rem;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-weight: 600;
+  margin-left: 8px;
+  vertical-align: middle;
+}
+.badge.super { background: rgba(255, 214, 51, 0.15); color: #ffd633; }
+.badge.admin { background: rgba(102, 204, 255, 0.15); color: #66ccff; }
+.badge.member { background: rgba(51, 204, 102, 0.15); color: #33cc66; }

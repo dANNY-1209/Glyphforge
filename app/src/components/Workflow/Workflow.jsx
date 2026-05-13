@@ -1,13 +1,11 @@
 import { useState, useEffect, useRef } from 'react'
-import AdminLogin from '../Gallery/Admin/AdminLogin'
 import './Workflow.css'
 
 const API_BASE = '/api'
 
-export default function Workflow({ isLoggedIn, adminMode, onAdminLoginSuccess, onAdminLogout, onAdminModeToggle }) {
+export default function Workflow({ isLoggedIn, adminMode, onAdminLogout, onAdminModeToggle }) {
   const [workflows, setWorkflows] = useState([])
   const [loading, setLoading] = useState(true)
-  const [showLoginModal, setShowLoginModal] = useState(false)
   const [showModal, setShowModal] = useState(false)
   const [editingWorkflow, setEditingWorkflow] = useState(null)
   const [formData, setFormData] = useState({ name: '', description: '' })
@@ -42,7 +40,7 @@ export default function Workflow({ isLoggedIn, adminMode, onAdminLoginSuccess, o
   }
 
   const getAuthHeaders = () => {
-    const token = localStorage.getItem('adminToken')
+    const token = localStorage.getItem('discordToken')
     return token ? { Authorization: `Bearer ${token}` } : {}
   }
 
@@ -218,15 +216,7 @@ export default function Workflow({ isLoggedIn, adminMode, onAdminLoginSuccess, o
   const handleAdminClick = () => {
     if (isLoggedIn) {
       onAdminModeToggle()
-    } else {
-      setShowLoginModal(true)
     }
-  }
-
-  // Handle login success
-  const handleLoginSuccess = (token) => {
-    setShowLoginModal(false)
-    onAdminLoginSuccess(token)
   }
 
   // Drag and drop for reordering
@@ -621,13 +611,6 @@ export default function Workflow({ isLoggedIn, adminMode, onAdminLoginSuccess, o
         </div>
       )}
 
-      {/* Admin Login Modal */}
-      {showLoginModal && (
-        <AdminLogin
-          onLoginSuccess={handleLoginSuccess}
-          onClose={() => setShowLoginModal(false)}
-        />
-      )}
     </div>
   )
 }

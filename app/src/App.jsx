@@ -5,7 +5,10 @@ import Gallery from './components/Gallery/Gallery'
 import Request from './components/Request/Request'
 import Changelog from './components/Changelog/Changelog'
 import Workflow from './components/Workflow/Workflow'
-import AdminLogin from './components/Gallery/Admin/AdminLogin'
+import AdminUsersPanel from './components/Auth/AdminUsersPanel'
+import LoginButton from './components/Auth/LoginButton'
+import AccessGate from './components/Auth/AccessGate'
+import { useAuth } from './auth/AuthContext'
 import { useDataCache } from './hooks/useDataCache'
 import { ToastProvider } from './components/Toast/ToastContext'
 
@@ -164,6 +167,7 @@ function App() {
   const [draggingCostumeFromType, setDraggingCostumeFromType] = useState(null)
   const costumeImageInputRef = useRef(null)
   const [uploadingCostumeImageIndex, setUploadingCostumeImageIndex] = useState(null)
+  // Retained for any legacy references; no longer used (Discord OAuth via <LoginButton>).
   const [showPromptLogin, setShowPromptLogin] = useState(false)
   
   // Notification state
@@ -199,13 +203,18 @@ function App() {
   // Scroll to top button visibility
   const [showScrollTop, setShowScrollTop] = useState(false)
 
-  // Shared admin state
-  const [isLoggedIn, setIsLoggedIn] = useState(() => {
-    const token = localStorage.getItem('adminToken')
-    const expiry = localStorage.getItem('adminTokenExpiry')
-    return token && expiry && Date.now() < parseInt(expiry)
-  })
+  // Auth — Discord OAuth + whitelist. `isLoggedIn` here means "is admin"
+  // so we can keep the legacy admin-mode UI affordances. Non-admin logged-in
+  // users are gated by AccessGate, not by this flag.
+  const auth = useAuth()
+  const isLoggedIn = auth.isAdmin
   const [adminMode, setAdminMode] = useState(false)
+
+  // Defensive: if the user lost admin (server demotion / token expiry),
+  // drop adminMode immediately so write UIs disappear.
+  useEffect(() => {
+    if (!auth.isAdmin && adminMode) setAdminMode(false)
+  }, [auth.isAdmin, adminMode])
 
   // Use data cache for prompts and loras
   const promptsCache = useDataCache('prompts', async () => {
@@ -516,16 +525,15 @@ function App() {
     }
   }
 
-  const handleAdminLoginSuccess = (token) => {
-    setIsLoggedIn(true)
+  // Legacy admin-login callback shim — Discord OAuth now handles login.
+  // Kept as a no-op so child components don't crash if they still call it.
+  const handleAdminLoginSuccess = () => {
     setAdminMode(true)
   }
 
   const handleAdminLogout = () => {
-    localStorage.removeItem('adminToken')
-    localStorage.removeItem('adminTokenExpiry')
-    setIsLoggedIn(false)
     setAdminMode(false)
+    auth.logout()
   }
 
   const handleAdminModeToggle = () => {
@@ -539,7 +547,7 @@ function App() {
     if (isLoggedIn) {
       onPromptAdminModeToggle()
     } else {
-      setShowPromptLogin(true)
+      auth.login()
     }
   }
 
@@ -549,10 +557,8 @@ function App() {
     }
   }
 
-  const handlePromptLoginSuccess = (token) => {
-    setIsLoggedIn(true)
+  const handlePromptLoginSuccess = () => {
     setAdminMode(true)
-    setShowPromptLogin(false)
   }
 
   const handleEditPrompt = (prompt) => {
@@ -623,7 +629,7 @@ function App() {
     setLoadingMessage(isCreatingPrompt ? 'Creating prompt...' : 'Updating prompt...')
 
     try {
-      const token = localStorage.getItem('adminToken')
+      const token = auth.token
       
       if (isCreatingPrompt) {
         // Validate: at least one image is required
@@ -758,7 +764,7 @@ function App() {
 
   // Helper function to upload pending images after prompt creation
   const uploadPendingImages = async (promptId) => {
-    const token = localStorage.getItem('adminToken')
+    const token = auth.token
     
     for (let i = 0; i < pendingImages.length; i++) {
       const file = pendingImages[i]
@@ -848,7 +854,7 @@ function App() {
     setLoadingMessage(isCreatingCostume ? 'Creating costume...' : 'Updating costume...')
 
     try {
-      const token = localStorage.getItem('adminToken')
+      const token = auth.token
       
       if (isCreatingCostume) {
         const hasImages = pendingCostumeImages.some(img => img !== null)
@@ -977,7 +983,7 @@ function App() {
   }
 
   const uploadPendingCostumeImages = async (costumeId) => {
-    const token = localStorage.getItem('adminToken')
+    const token = auth.token
     
     for (let i = 0; i < pendingCostumeImages.length; i++) {
       const file = pendingCostumeImages[i]
@@ -1003,7 +1009,7 @@ function App() {
   // LoRA admin handlers
   const handleLoraAdminClick = () => {
     if (!isLoggedIn) {
-      setShowPromptLogin(true)
+      auth.login()
     } else {
       setAdminMode(!adminMode)
     }
@@ -1091,7 +1097,7 @@ function App() {
     setLoadingMessage(isCreatingLora ? 'Creating LoRA...' : 'Updating LoRA...')
 
     try {
-      const token = localStorage.getItem('adminToken')
+      const token = auth.token
       const headers = {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${token}`
@@ -1243,7 +1249,7 @@ function App() {
     if (!confirm('Are you sure you want to delete this LoRA?')) return
 
     try {
-      const token = localStorage.getItem('adminToken')
+      const token = auth.token
       const response = await fetch(`/api/loras/${editLoraData.id}`, {
         method: 'DELETE',
         headers: { 'Authorization': `Bearer ${token}` }
@@ -1344,7 +1350,7 @@ function App() {
     setLoadingMessage(isCreatingFnLora ? 'Creating Fn LoRA...' : 'Updating Fn LoRA...')
 
     try {
-      const token = localStorage.getItem('adminToken')
+      const token = auth.token
       const headers = {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${token}`
@@ -1492,7 +1498,7 @@ function App() {
     if (!confirm('Are you sure you want to delete this Fn LoRA?')) return
 
     try {
-      const token = localStorage.getItem('adminToken')
+      const token = auth.token
       const response = await fetch(`/api/fn-loras/${editFnLoraData.id}`, {
         method: 'DELETE',
         headers: { 'Authorization': `Bearer ${token}` }
@@ -1549,7 +1555,7 @@ function App() {
 
   const handleCostumeAdminClick = () => {
     if (!isLoggedIn) {
-      setShowPromptLogin(true)
+      auth.login()
     } else {
       setAdminMode(!adminMode)
     }
@@ -1595,7 +1601,7 @@ function App() {
 
       // Save to server
       try {
-        const token = localStorage.getItem('adminToken')
+        const token = auth.token
         await fetch('/api/costumes/metadata', {
           method: 'PUT',
           headers: {
@@ -1647,7 +1653,7 @@ function App() {
 
       // Save to server
       try {
-        const token = localStorage.getItem('adminToken')
+        const token = auth.token
         await fetch('/api/costumes/metadata', {
           method: 'PUT',
           headers: {
@@ -2190,6 +2196,17 @@ function App() {
                 >
                   Changelog
                 </button>
+                {auth.isAdmin && (
+                  <button
+                    className={`sidebar-tab ${activeTab === 'users' ? 'active' : ''}`}
+                    onClick={() => {
+                      setActiveTab('users')
+                      setIsSidebarOpen(false)
+                    }}
+                  >
+                    Users
+                  </button>
+                )}
               </nav>
             </div>
           </>
@@ -2251,10 +2268,18 @@ function App() {
           >
             Changelog
           </button>
+          {auth.isAdmin && (
+            <button
+              className={`tab ${activeTab === 'users' ? 'active' : ''}`}
+              onClick={() => setActiveTab('users')}
+            >
+              Users
+            </button>
+          )}
         </div>
 
         <div className="content-area">
-          {activeTab === 'prompt' && (
+          {auth.isWhitelisted && activeTab === 'prompt' && (
             <div className="tab-content">
               <div className="tab-header">
                 <div>
@@ -2269,13 +2294,7 @@ function App() {
                   >
                     ?
                   </button>
-                  <button
-                    className={`admin-toggle-btn ${adminMode ? 'active' : ''}`}
-                    onClick={handlePromptAdminClick}
-                    title={isLoggedIn ? (adminMode ? 'Exit Admin Mode' : 'Enter Admin Mode') : 'Admin Login'}
-                  >
-                    {adminMode ? '🔓 Admin Mode' : (isLoggedIn ? '🔒 Admin' : '🔐 Login')}
-                  </button>
+                  <LoginButton adminMode={adminMode} onAdminModeToggle={handlePromptAdminClick} />
                 </div>
               </div>
 
@@ -2443,13 +2462,7 @@ function App() {
                       </div>
                     )}
                   </div>
-                  <button
-                    className={`admin-toggle-btn ${adminMode ? 'active' : ''}`}
-                    onClick={handleLoraAdminClick}
-                    title={isLoggedIn ? (adminMode ? 'Exit Admin Mode' : 'Enter Admin Mode') : 'Admin Login'}
-                  >
-                    {adminMode ? '🔓 Admin Mode' : (isLoggedIn ? '🔒 Admin' : '🔐 Login')}
-                  </button>
+                  <LoginButton adminMode={adminMode} onAdminModeToggle={handleLoraAdminClick} />
                 </div>
               </div>
 
@@ -2640,7 +2653,7 @@ function App() {
             </div>
           )}
 
-          {activeTab === 'fnlora' && (
+          {auth.isWhitelisted && activeTab === 'fnlora' && (
             <div className="tab-content">
               <div className="tab-header">
                 <div>
@@ -2655,19 +2668,13 @@ function App() {
                   >
                     ?
                   </button>
-                  <button
-                    className={`admin-toggle-btn ${adminMode ? 'active' : ''}`}
-                    onClick={() => {
-                      if (!isLoggedIn) {
-                        setShowPromptLogin(true)
-                      } else {
-                        setAdminMode(!adminMode)
-                      }
-                    }}
-                    title={isLoggedIn ? (adminMode ? 'Exit Admin Mode' : 'Enter Admin Mode') : 'Admin Login'}
-                  >
-                    {adminMode ? '🔓 Admin Mode' : (isLoggedIn ? '🔒 Admin' : '🔐 Login')}
-                  </button>
+                  <LoginButton adminMode={adminMode} onAdminModeToggle={() => {
+                    if (!isLoggedIn) {
+                      auth.login()
+                    } else {
+                      setAdminMode(!adminMode)
+                    }
+                  }} />
                 </div>
               </div>
 
@@ -2774,7 +2781,7 @@ function App() {
             </div>
           )}
 
-          {activeTab === 'costume' && (
+          {auth.isWhitelisted && activeTab === 'costume' && (
             <div className="tab-content">
               <div className="tab-header">
                 <div>
@@ -2782,13 +2789,7 @@ function App() {
                   <p>Browse costume and outfit prompts by category</p>
                 </div>
                 <div className="tab-header-actions">
-                  <button
-                    className={`admin-toggle-btn ${adminMode ? 'active' : ''}`}
-                    onClick={handleCostumeAdminClick}
-                    title={isLoggedIn ? (adminMode ? 'Exit Admin Mode' : 'Enter Admin Mode') : 'Admin Login'}
-                  >
-                    {adminMode ? '🔓 Admin Mode' : (isLoggedIn ? '🔒 Admin' : '🔐 Login')}
-                  </button>
+                  <LoginButton adminMode={adminMode} onAdminModeToggle={handleCostumeAdminClick} />
                 </div>
               </div>
 
@@ -2890,32 +2891,30 @@ function App() {
             </div>
           )}
 
-          {activeTab === 'gallery' && (
+          {auth.isWhitelisted && activeTab === 'gallery' && (
             <div className="tab-content">
               <Gallery
                 sensitivityFilter={sensitivityFilter}
                 isLoggedIn={isLoggedIn}
                 adminMode={adminMode}
-                onAdminLoginSuccess={handleAdminLoginSuccess}
                 onAdminLogout={handleAdminLogout}
                 onAdminModeToggle={handleAdminModeToggle}
               />
             </div>
           )}
 
-          {activeTab === 'request' && (
+          {auth.isWhitelisted && activeTab === 'request' && (
             <div className="tab-content">
               <Request
                 isLoggedIn={isLoggedIn}
                 adminMode={adminMode}
-                onAdminLoginSuccess={handleAdminLoginSuccess}
                 onAdminLogout={handleAdminLogout}
                 onAdminModeToggle={handleAdminModeToggle}
               />
             </div>
           )}
 
-          {activeTab === 'statistics' && (
+          {auth.isWhitelisted && activeTab === 'statistics' && (
             <div className="tab-content statistics-content">
               <div className="tab-header">
                 <div>
@@ -3430,15 +3429,26 @@ function App() {
             </div>
           )}
 
-          {activeTab === 'workflow' && (
+          {auth.isWhitelisted && activeTab === 'workflow' && (
             <div className="tab-content">
               <Workflow
                 isLoggedIn={isLoggedIn}
                 adminMode={adminMode}
-                onAdminLoginSuccess={handleAdminLoginSuccess}
                 onAdminLogout={handleAdminLogout}
                 onAdminModeToggle={handleAdminModeToggle}
               />
+            </div>
+          )}
+
+          {auth.isAdmin && activeTab === 'users' && (
+            <div className="tab-content">
+              <AdminUsersPanel />
+            </div>
+          )}
+
+          {!auth.isWhitelisted && activeTab !== 'lora' && activeTab !== 'changelog' && activeTab !== 'users' && (
+            <div className="tab-content">
+              <AccessGate />
             </div>
           )}
         </div>
@@ -4890,13 +4900,7 @@ function App() {
         </div>
       )}
 
-      {/* Prompt Admin Login Modal */}
-      {showPromptLogin && (
-        <AdminLogin
-          onClose={() => setShowPromptLogin(false)}
-          onLoginSuccess={handlePromptLoginSuccess}
-        />
-      )}
+      {/* Prompt Admin Login Modal — removed; Discord OAuth handles login via <LoginButton> */}
 
       {selectedLora && (
         <div className="popup-overlay" onMouseDown={handleOverlayMouseDown} onClick={(e) => handleOverlayClick(e, () => setSelectedLora(null))}>
