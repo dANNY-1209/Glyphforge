@@ -534,6 +534,14 @@ function buildDiscordEmbed(eventType, data) {
 // respond to the user.
 function sendDiscordNotification(eventType, data) {
   if (!DISCORD_WEBHOOK_URL) return
+  // Whitelist / admin lifecycle events are intentionally NOT sent to the public
+  // webhook channel — they are admin-only signals and would leak Discord IDs
+  // and review notes to all channel viewers. Visible only in the admin Users
+  // tab + audit log.
+  if (typeof eventType === 'string' &&
+      (eventType.startsWith('whitelist_') || eventType.startsWith('admin_'))) {
+    return
+  }
   const payload = buildDiscordEmbed(eventType, data || {})
   fetch(DISCORD_WEBHOOK_URL, {
     method: 'POST',
@@ -573,17 +581,50 @@ const authStore = createAuthStore({
   sendDiscordNotification,
 })
 
-// Extract Discord JWT from Authorization header. Returns the decoded
-// payload (which has at least `discordId`) or null. Never throws.
+// Extract Discord JWT from either the Authorization header (preferred,
+// used by fetch() calls from the SPA) or the `gf_session` httpOnly cookie
+// (used for static asset requests like <img src>, where the browser cannot
+// attach custom headers but does send cookies on same-origin requests).
+// Returns the decoded payload (which has at least `discordId`) or null.
+// Never throws.
 function parseDiscordJwt(req) {
+  let token = null
   const header = req.headers.authorization
-  if (!header || !header.startsWith('Bearer ')) return null
-  const token = header.slice(7)
+  if (header && header.startsWith('Bearer ')) {
+    token = header.slice(7)
+  } else if (req.headers.cookie) {
+    // Manual cookie parse to avoid pulling in cookie-parser
+    const parts = req.headers.cookie.split(';')
+    for (const p of parts) {
+      const idx = p.indexOf('=')
+      if (idx === -1) continue
+      const k = p.slice(0, idx).trim()
+      if (k === 'gf_session') {
+        token = decodeURIComponent(p.slice(idx + 1).trim())
+        break
+      }
+    }
+  }
+  if (!token) return null
   try {
     return jwt.verify(token, process.env.JWT_SECRET)
   } catch {
     return null
   }
+}
+
+// Build the Set-Cookie value for our session cookie. Centralized so
+// callback / probe / logout all stay consistent.
+function buildSessionCookie(req, token, { clear = false } = {}) {
+  const isHttps = (req.headers['x-forwarded-proto'] === 'https') || req.secure
+  return [
+    clear ? 'gf_session=' : `gf_session=${encodeURIComponent(token)}`,
+    'HttpOnly',
+    'Path=/',
+    clear ? 'Max-Age=0' : `Max-Age=${30 * 24 * 60 * 60}`,
+    'SameSite=Lax',
+    ...(isHttps ? ['Secure'] : []),
+  ].join('; ')
 }
 
 // Populate req.auth = { user, flags } when a valid token is present.
@@ -601,6 +642,21 @@ function attachAuth(req, _res, next) {
       },
       ...flags,
     }
+    // Lazy profile backfill: if we have JWT claims but no on-disk profile
+    // (e.g. an old data-dir bug wiped it), refill from the JWT so admin UI
+    // can render usernames instead of bare snowflake IDs. Cheap because
+    // profiles are JSON-cached in memory after first load.
+    try {
+      const existing = authStore.getProfile(decoded.discordId)
+      if (!existing && decoded.username) {
+        authStore.upsertProfile({
+          discordId: decoded.discordId,
+          username: decoded.username,
+          globalName: decoded.globalName || decoded.username,
+          avatar: decoded.avatar,
+        })
+      }
+    } catch (_e) { /* non-fatal */ }
   } else {
     req.auth = null
   }
@@ -614,8 +670,14 @@ function requireLogin(req, res, next) {
 }
 
 function requireWhitelist(req, res, next) {
-  if (!req.auth) return res.status(401).json({ error: 'Login required' })
+  if (!req.auth) {
+    if (req.path.startsWith('/api/')) {
+      console.log(`[auth-deny] 401 ${req.method} ${req.path} — no auth (cookie=${req.headers.cookie ? 'present' : 'none'}, bearer=${req.headers.authorization ? 'present' : 'none'})`)
+    }
+    return res.status(401).json({ error: 'Login required' })
+  }
   if (!req.auth.isWhitelisted) {
+    console.log(`[auth-deny] 403 ${req.method} ${req.path} — user=${req.auth.user.discordId} (${req.auth.user.username}) isAdmin=${req.auth.isAdmin} isSuper=${req.auth.isSuperAdmin}`)
     return res.status(403).json({ error: 'Whitelist approval required', needsWhitelist: true })
   }
   return next()
@@ -724,10 +786,34 @@ async function sendWebhookNotification(eventType, data) {
   }
 }
 
-// Serve static files from dist folder in production
+// Serve static files from dist folder in production.
+// CRITICAL: index.html MUST be served with no-cache so that browsers always
+// fetch the latest one (which points at the latest hashed bundle filename).
+// The hashed bundle files themselves are safe to long-cache because their
+// filename changes on every build.
 if (process.env.NODE_ENV === 'production') {
   const distPath = path.join(__dirname, 'dist')
-  app.use(express.static(distPath))
+  // Serve index.html with strict no-cache headers
+  app.get(['/', '/index.html'], (req, res) => {
+    res.set('Cache-Control', 'no-cache, no-store, must-revalidate')
+    res.set('Pragma', 'no-cache')
+    res.set('Expires', '0')
+    res.sendFile(path.join(distPath, 'index.html'))
+  })
+  // Everything else (hashed bundles, /assets/*, /icons/*, etc.) — default static
+  app.use(express.static(distPath, {
+    setHeaders: (res, filePath) => {
+      // Belt-and-suspenders: never cache any html
+      if (filePath.endsWith('.html')) {
+        res.set('Cache-Control', 'no-cache, no-store, must-revalidate')
+        res.set('Pragma', 'no-cache')
+        res.set('Expires', '0')
+      } else if (/\.(js|css|woff2?|png|jpg|jpeg|webp|svg|ico)$/i.test(filePath)) {
+        // Hashed bundles + static assets — safe to long-cache (filename has hash)
+        res.set('Cache-Control', 'public, max-age=31536000, immutable')
+      }
+    },
+  }))
 }
 
 // Cache options for static files - enable browser caching for images
@@ -747,8 +833,10 @@ const galleryOptions = {
 }
 
 // Static file service - serve images from configured folder with caching.
-// Whitelist gate: image paths under non-LoRA folders require login + whitelist.
-// LoRA images stay public (matches the "anon sees only LoRA" rule).
+// Non-LoRA folders are gated by requireWhitelist. Browsers can't attach
+// custom headers to <img src>, so we rely on the gf_session httpOnly
+// cookie (set during OAuth callback / /api/auth/me probe). LoRA folder
+// stays public to match the "anon sees only LoRA tab" rule.
 app.use(`/${PROMPT_FOLDER_NAME}`, requireWhitelist, express.static(PROMPT_FOLDER_PATH, staticOptions))
 if (COSTUME_FOLDER_PATH) {
   app.use(`/${COSTUME_FOLDER_NAME}`, requireWhitelist, express.static(COSTUME_FOLDER_PATH, staticOptions))
@@ -4386,6 +4474,10 @@ app.get('/api/auth/discord/callback', async (req, res) => {
       { expiresIn: '30d' }
     )
 
+    // Set httpOnly cookie so <img>/static asset requests authenticate
+    // automatically (browsers can't attach Authorization headers to those).
+    res.setHeader('Set-Cookie', buildSessionCookie(req, discordToken))
+
     // Redirect back to the app with the token
     res.redirect(`/?discord_token=${discordToken}`)
   } catch (error) {
@@ -4414,6 +4506,15 @@ app.get('/api/auth/discord/me', (req, res) => {
 // Alias matching the plan's naming, same payload as /api/auth/discord/me.
 app.get('/api/auth/me', (req, res) => {
   if (!req.auth) return res.status(401).json({ error: 'Login required' })
+  // Opportunistically (re-)issue the httpOnly cookie. Lets users who logged
+  // in before the cookie was introduced pick one up on their next probe
+  // without having to log out and back in.
+  if (!req.headers.cookie || !req.headers.cookie.includes('gf_session=')) {
+    const header = req.headers.authorization
+    if (header && header.startsWith('Bearer ')) {
+      res.setHeader('Set-Cookie', buildSessionCookie(req, header.slice(7)))
+    }
+  }
   res.json({
     discordId: req.auth.user.discordId,
     username: req.auth.user.username,
@@ -4423,6 +4524,14 @@ app.get('/api/auth/me', (req, res) => {
     isAdmin: req.auth.isAdmin,
     isSuperAdmin: req.auth.isSuperAdmin,
   })
+})
+
+// Clear the httpOnly session cookie. The SPA also drops its localStorage
+// token in parallel; this endpoint exists so static asset requests stop
+// being authenticated after logout.
+app.post('/api/auth/logout', (req, res) => {
+  res.setHeader('Set-Cookie', buildSessionCookie(req, null, { clear: true }))
+  res.json({ ok: true })
 })
 
 // ============================================
@@ -4437,7 +4546,19 @@ app.post('/api/auth/whitelist-request', requireLogin, requestAccessLimiter, (req
       return res.status(400).json({ error: 'Already whitelisted', alreadyWhitelisted: true })
     }
     const reason = String(req.body?.reason || '').trim()
-    const newReq = authStore.createRequest({ discordId: req.auth.discordId, reason })
+    // Make sure we have a profile on file for this user. With long-lived JWTs
+    // (30d) it's possible the user's profile row got wiped (e.g. by an old
+    // data-dir bug) while their JWT is still valid. Backfill from JWT claims
+    // so the pending-request card shows a proper username instead of bare ID.
+    try {
+      authStore.upsertProfile({
+        discordId: req.auth.user.discordId,
+        username: req.auth.user.username,
+        globalName: req.auth.user.globalName || req.auth.user.username,
+        avatar: req.auth.user.avatar,
+      })
+    } catch (_e) { /* non-fatal */ }
+    const newReq = authStore.createRequest({ discordId: req.auth.user.discordId, reason })
     authStore.audit('whitelist_request_submit', {
       discordId: req.auth.discordId, username: req.auth.user.username, requestId: newReq.id,
     })
@@ -4517,13 +4638,20 @@ app.get('/api/admin/users', requireAdmin, (req, res) => {
   res.json({ users: out })
 })
 
-// List pending requests (most recent first).
+// List pending requests (most recent first). Re-joins on-disk profile so a
+// stale `profile:null` (from a request submitted before profile was on file)
+// still shows a friendly username/avatar once the user logs in again or hits
+// any authenticated endpoint (attachAuth backfills).
 app.get('/api/admin/whitelist-requests', requireAdmin, (req, res) => {
   const all = authStore.listRequests()
   const status = req.query.status ? String(req.query.status) : null
   const filtered = status ? all.filter((r) => r.status === status) : all
   filtered.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''))
-  res.json({ requests: filtered })
+  const enriched = filtered.map((r) => ({
+    ...r,
+    profile: r.profile || authStore.getProfile(r.discordId) || null,
+  }))
+  res.json({ requests: enriched })
 })
 
 function reviewHandler(decision) {

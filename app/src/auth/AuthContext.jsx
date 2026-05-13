@@ -108,6 +108,8 @@ export function AuthProvider({ children }) {
 
   const logout = useCallback(() => {
     try { localStorage.removeItem(TOKEN_KEY) } catch {}
+    // Fire-and-forget cookie clear; we don't need to await.
+    try { fetch('/api/auth/logout', { method: 'POST' }) } catch {}
     setToken(null)
     setUser(null)
     setFlags({ isWhitelisted: false, isAdmin: false, isSuperAdmin: false })

@@ -34,8 +34,8 @@ export default function AccessGate() {
     return (
       <div className="access-gate">
         <div className="access-gate-icon">🔒</div>
-        <h2>Login required</h2>
-        <p>This section is only available to logged-in members.</p>
+        <h2>Sign-in required</h2>
+        <p>This section is whitelist-only. Log in with Discord first, then submit an access request from here.</p>
         <button className="access-gate-cta" onClick={() => auth.login()}>
           Log in with Discord
         </button>
@@ -52,18 +52,18 @@ export default function AccessGate() {
     return (
       <div className="access-gate">
         <div className="access-gate-icon">⏳</div>
-        <h2>Request pending</h2>
-        <p>Your access request has been submitted. You'll get access here once an admin approves it.</p>
+        <h2>Request pending review</h2>
+        <p>Your access request has been submitted and is awaiting admin review. You will see the full content here once it is approved.</p>
         {request.reason && (
           <blockquote className="access-gate-reason">
-            <strong>Your reason:</strong>
+            <strong>Your stated reason:</strong>
             <p>{request.reason}</p>
           </blockquote>
         )}
         <button
           className="access-gate-cta secondary"
           onClick={async () => {
-            if (!confirm('Cancel your access request?')) return
+            if (!confirm('Cancel this request? You can resubmit afterwards.')) return
             const ok = await auth.cancelMyAccessRequest()
             if (ok) { setRequest(null); auth.refresh() }
           }}
@@ -97,17 +97,17 @@ export default function AccessGate() {
     <div className="access-gate">
       <div className="access-gate-icon">🙋</div>
       <h2>Request access</h2>
-      <p>Tell the admins why you'd like access. You'll get a notification here once they review.</p>
+      <p>Briefly introduce yourself or explain why you would like access, so the admin can review your request.</p>
       {previouslyDenied && (
         <div className="access-gate-warning">
           Your previous request was denied
-          {request.reviewNote && <>: <em>"{request.reviewNote}"</em></>}
-          . You can submit a new one.
+          {request.reviewNote && <>: <em>“{request.reviewNote}”</em></>}
+          . You are welcome to submit a new request.
         </div>
       )}
       {previouslyCancelled && (
         <div className="access-gate-note">
-          Your previous request was cancelled. Submit a new one any time.
+          Your previous request was cancelled. You can submit a new one anytime.
         </div>
       )}
       <form onSubmit={submit} className="access-gate-form">
@@ -116,7 +116,7 @@ export default function AccessGate() {
           onChange={(e) => setReason(e.target.value)}
           rows={4}
           maxLength={1000}
-          placeholder="Why do you want access? (optional but recommended)"
+          placeholder="e.g. I'm a friend of Discord ID xxx / I'd like to browse LoRAs for reference…"
         />
         {submitError && <div className="access-gate-error">{submitError}</div>}
         <button className="access-gate-cta" type="submit" disabled={submitting}>

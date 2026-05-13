@@ -22,6 +22,12 @@
         "hash": "89d5ebf",
         "type": "fix",
         "message": "Whitelist and admin lists no longer disappear after redeploys"
+      },
+      {
+        "hash": "e63abfb",
+        "type": "security",
+        "message": "Image URLs now require whitelist access — no more guessable static paths",
+        "hidden": true
       }
     ]
   },

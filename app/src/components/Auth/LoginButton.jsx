@@ -25,16 +25,37 @@ export default function LoginButton({ adminMode, onAdminModeToggle }) {
     return () => document.removeEventListener('mousedown', onDocClick)
   }, [])
 
-  // Anonymous: single button kicks Discord OAuth.
+  // Anonymous: tap once to reveal a small explainer + the OAuth button,
+  // so users understand login is the gateway to requesting access rather
+  // than instant entry.
   if (!auth.isLoggedIn) {
     return (
-      <button
-        className="admin-toggle-btn"
-        onClick={() => auth.login()}
-        title="Log in with Discord"
-      >
-        🔐 Discord Login
-      </button>
+      <div className="auth-widget" ref={ref}>
+        <button
+          className="admin-toggle-btn"
+          onClick={() => setOpen((v) => !v)}
+          title="Sign in / request access"
+        >
+          🔐 Log in with Discord
+        </button>
+        {open && (
+          <div className="auth-menu">
+            <div className="auth-menu-header" style={{ fontSize: '0.78rem', lineHeight: 1.4 }}>
+              Signing in with Discord lets you view content beyond the LoRA tab.<br/>
+              If you are not yet whitelisted, you can submit a
+              <strong> Request Access </strong>
+              form on any restricted page after logging in.
+            </div>
+            <button
+              className="auth-menu-item"
+              style={{ fontWeight: 600 }}
+              onClick={() => { setOpen(false); auth.login() }}
+            >
+              Continue with Discord →
+            </button>
+          </div>
+        )}
+      </div>
     )
   }
 
