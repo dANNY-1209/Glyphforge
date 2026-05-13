@@ -18,6 +18,7 @@ export default function Workflow({ isLoggedIn, adminMode, onAdminLoginSuccess, o
   const [dragOverArea, setDragOverArea] = useState(null)
   const [draggingId, setDraggingId] = useState(null)
   const [saving, setSaving] = useState(false)
+  const [editNote, setEditNote] = useState('')
   
   const fileInputRef = useRef(null)
   const attachmentInputRef = useRef(null)
@@ -64,6 +65,7 @@ export default function Workflow({ isLoggedIn, adminMode, onAdminLoginSuccess, o
     setFilesToDelete([])
     setCurrentWorkflowFile(workflow.workflowFile || null)
     setCurrentAttachments(workflow.attachments || [])
+    setEditNote('')
     setShowModal(true)
   }
 
@@ -76,6 +78,7 @@ export default function Workflow({ isLoggedIn, adminMode, onAdminLoginSuccess, o
     setFilesToDelete([])
     setCurrentWorkflowFile(null)
     setCurrentAttachments([])
+    setEditNote('')
   }
 
   // Handle file selection
@@ -119,7 +122,7 @@ export default function Workflow({ isLoggedIn, adminMode, onAdminLoginSuccess, o
         await fetch(`${API_BASE}/workflows/${workflowId}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-          body: JSON.stringify(formData)
+          body: JSON.stringify({ ...formData, editNote })
         })
       } else {
         const res = await fetch(`${API_BASE}/workflows`, {
@@ -585,6 +588,22 @@ export default function Workflow({ isLoggedIn, adminMode, onAdminLoginSuccess, o
                 />
               </div>
               
+              {editingWorkflow && (
+                <div className="edit-note-block">
+                  <label className="edit-note-label" htmlFor="edit-note-workflow">Change note (optional)</label>
+                  <div className="edit-note-hint">
+                    Shown in the Discord notification. Leave blank to auto-list the changed fields.
+                  </div>
+                  <textarea
+                    id="edit-note-workflow"
+                    value={editNote}
+                    onChange={(e) => setEditNote(e.target.value)}
+                    maxLength={500}
+                    placeholder="Describe what you changed and why…"
+                  />
+                </div>
+              )}
+
               <div className="form-actions">
                 <button className="btn-cancel" onClick={handleCloseModal}>
                   Cancel

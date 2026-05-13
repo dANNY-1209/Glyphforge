@@ -1,5 +1,15 @@
 [
   {
+    "date": "2026-05-13",
+    "changes": [
+      {
+        "hash": "f083f64",
+        "type": "feat",
+        "message": "Discord notifications now fire on edits (LoRA, Fn LoRA, Prompt, Costume, Workflow, Request) — with an optional change-note sidebar in every edit modal"
+      }
+    ]
+  },
+  {
     "date": "2026-05-10",
     "changes": [
       {

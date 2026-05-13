@@ -34,6 +34,11 @@ function Request({ isLoggedIn, adminMode, onAdminLoginSuccess, onAdminLogout, on
   const [rejectReasonRequest, setRejectReasonRequest] = useState(null)
   const [rejectReasonInput, setRejectReasonInput] = useState('')
 
+  // Admin edit note — included in PUT body so Discord notification can quote
+  // the change description verbatim. Empty string = backend auto-generates
+  // a "Changed: <fields>" message from the diff.
+  const [editNote, setEditNote] = useState('')
+
   // Category collapse state (persisted in localStorage)
   const [collapsedCategories, setCollapsedCategories] = useState(() => {
     try {
@@ -302,6 +307,7 @@ function Request({ isLoggedIn, adminMode, onAdminLoginSuccess, onAdminLogout, on
   const handleCloseEditModal = () => {
     setShowEditModal(false)
     setEditingRequest(null)
+    setEditNote('')
     setFormData({
       characterName: '',
       outfit: '',
@@ -330,7 +336,8 @@ function Request({ isLoggedIn, adminMode, onAdminLoginSuccess, onAdminLogout, on
         body: JSON.stringify({
           type: requestType,
           ...formData,
-          status: editingRequest.status
+          status: editingRequest.status,
+          editNote
         })
       })
 
@@ -1032,6 +1039,20 @@ function Request({ isLoggedIn, adminMode, onAdminLoginSuccess, onAdminLogout, on
                   value={formData.socialMediaLink}
                   onChange={(e) => setFormData({ ...formData, socialMediaLink: e.target.value })}
                   placeholder="https://..."
+                />
+              </div>
+
+              <div className="edit-note-block">
+                <label className="edit-note-label" htmlFor="edit-note-request">Change note (optional)</label>
+                <div className="edit-note-hint">
+                  Shown in the Discord notification. Leave blank to auto-list the changed fields.
+                </div>
+                <textarea
+                  id="edit-note-request"
+                  value={editNote}
+                  onChange={(e) => setEditNote(e.target.value)}
+                  maxLength={500}
+                  placeholder="Describe what you changed and why…"
                 />
               </div>
 

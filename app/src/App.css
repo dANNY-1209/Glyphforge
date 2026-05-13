@@ -3386,3 +3386,40 @@ label {
   cursor: not-allowed;
   pointer-events: none;
 }
+
+/* ============================================================
+ * Edit-note sidebar — shown inside every edit modal so the
+ * admin can describe what they changed. The text is sent as
+ * `editNote` in the PUT body and surfaced verbatim in the
+ * Discord notification embed. When empty, the backend falls
+ * back to listing the changed field names.
+ * ============================================================ */
+.edit-note-block {
+  margin: 12px 0;
+  padding: 10px 12px;
+  border-left: 3px solid #66ccff;
+  background: rgba(102, 204, 255, 0.06);
+  border-radius: 4px;
+}
+.edit-note-block .edit-note-label {
+  display: block;
+  font-size: 0.85rem;
+  font-weight: 600;
+  margin-bottom: 4px;
+  color: #66ccff;
+}
+.edit-note-block .edit-note-hint {
+  font-size: 0.75rem;
+  opacity: 0.7;
+  margin-bottom: 6px;
+}
+.edit-note-block textarea {
+  width: 100%;
+  min-height: 56px;
+  resize: vertical;
+  font-family: inherit;
+  font-size: 0.9rem;
+  padding: 6px 8px;
+  border-radius: 4px;
+  box-sizing: border-box;
+}

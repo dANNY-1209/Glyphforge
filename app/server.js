@@ -285,7 +285,90 @@ const DISCORD_EVENT_STYLES = {
   new_costume:   { color: 0xffaa33, emoji: '👗', label: 'Costume' },
   new_workflow:  { color: 0x33cc99, emoji: '🧩', label: 'Workflow' },
   new_request:   { color: 0xffcc00, emoji: '📥', label: 'Request' },
+  // Edit variants — darker / cooler shade of the same hue, ✏️ to distinguish
+  edit_lora:     { color: 0xb34870, emoji: '✏️', label: 'LoRA' },
+  edit_fn_lora:  { color: 0x6c47b3, emoji: '✏️', label: 'Functional LoRA' },
+  edit_prompt:   { color: 0x4791b3, emoji: '✏️', label: 'Prompt' },
+  edit_costume:  { color: 0xb37726, emoji: '✏️', label: 'Costume' },
+  edit_workflow: { color: 0x269173, emoji: '✏️', label: 'Workflow' },
+  edit_request:  { color: 0xb38f00, emoji: '✏️', label: 'Request' },
   test:          { color: 0x808080, emoji: '🧪', label: 'Test' },
+}
+
+// Human-friendly labels for fields surfaced in edit notifications. Anything
+// not in the map falls back to a Title Case version of the camelCase name.
+const FIELD_LABELS = {
+  character:        'Character',
+  characterName:    'Character Name',
+  characterCount:   'Character Count',
+  cloth:            'Outfit',
+  company:          'Company',
+  group:            'Group',
+  gender:           'Gender',
+  model:            'Model',
+  link:             'Link',
+  prompt:           'Prompt',
+  negativePrompt:   'Negative Prompt',
+  title:            'Title',
+  'sub-title':      'Sub-title',
+  subTitle:         'Sub-title',
+  type:             'Type',
+  view:             'View',
+  place:            'Place',
+  nudity:           'Nudity',
+  sensitive:        'Rating',
+  stability:        'Stability',
+  weight:           'Weight',
+  author:           'Author',
+  costumePrompt:    'Costume Prompt',
+  usedFnLoras:      'Used Fn LoRAs',
+  name:             'Name',
+  description:      'Description',
+  workflowFile:     'Workflow File',
+  attachments:      'Attachments',
+  outfit:           'Outfit',
+  livestreamArchive:'Livestream Archive',
+  channelLink:      'Channel Link',
+  socialMediaLink:  'Social Media Link',
+  fnLoraTitle:      'Fn LoRA Title',
+  fnLoraSubTitle:   'Fn LoRA Sub-title',
+  note:             'Note',
+  status:           'Status',
+  rejectReason:     'Reject Reason',
+}
+
+function humanizeField(name) {
+  if (FIELD_LABELS[name]) return FIELD_LABELS[name]
+  // camelCase → Title Case (e.g. "myFieldName" → "My Field Name")
+  return String(name)
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replace(/[_-]+/g, ' ')
+    .replace(/\b\w/g, (c) => c.toUpperCase())
+}
+
+// Stable JSON for deep-equal comparison. Used to detect whether a meta
+// field actually changed across an edit. Object key order is normalized.
+function stableStringify(value) {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value)
+  if (Array.isArray(value)) return '[' + value.map(stableStringify).join(',') + ']'
+  const keys = Object.keys(value).sort()
+  return '{' + keys.map((k) => JSON.stringify(k) + ':' + stableStringify(value[k])).join(',') + '}'
+}
+
+// Compute the list of fields whose values changed between oldMeta and newMeta.
+// `fields` is the allowlist of fields to inspect; internal flags like
+// `discordNotified`, `createdAt`, `updatedAt`, `order`, `submittedBy` are
+// excluded by virtue of not being in the allowlist for any PUT handler.
+function diffMeta(oldMeta, newMeta, fields) {
+  const changed = []
+  const o = oldMeta || {}
+  const n = newMeta || {}
+  for (const f of fields) {
+    if (stableStringify(o[f]) !== stableStringify(n[f])) {
+      changed.push(f)
+    }
+  }
+  return changed
 }
 
 // Build a Discord embed payload for a given event.  Returns the body to POST
@@ -298,7 +381,29 @@ function buildDiscordEmbed(eventType, data) {
   let url = PUBLIC_BASE_URL || undefined
   let embed_image_url = ''
 
-  if (eventType === 'new_lora') {
+  // Edit events share a single rendering path: title shows the resource label
+  // + identifier, description is either the admin-supplied note or an
+  // auto-generated "Changed: a, b, c" line based on `changedFields`.
+  const isEdit = typeof eventType === 'string' && eventType.startsWith('edit_')
+  if (isEdit) {
+    const name =
+      data.title ||
+      data.name ||
+      data.character ||
+      data.characterName ||
+      (data.id !== undefined ? `#${data.id}` : 'Untitled')
+    title = `${style.emoji} Updated ${style.label}: ${name}`
+    const note = typeof data.editNote === 'string' ? data.editNote.trim() : ''
+    if (note) {
+      description = `📝 ${note.slice(0, 500)}`
+    } else if (Array.isArray(data.changedFields) && data.changedFields.length) {
+      const labels = data.changedFields.map(humanizeField)
+      description = `🔧 Changed: ${labels.join(', ')}`
+    } else {
+      description = '🔧 Edited (no field-level changes detected)'
+    }
+    if (data.thumbnailUrl) embed_image_url = data.thumbnailUrl
+  } else if (eventType === 'new_lora') {
     title = `${style.emoji} New LoRA: ${data.character || 'Untitled'}`
     if (data.cloth) description = `**Outfit:** ${data.cloth}`
     if (data.gender)   fields.push({ name: 'Gender', value: String(data.gender), inline: true })
@@ -1049,13 +1154,19 @@ app.put('/api/costumes/:id', authMiddleware, (req, res) => {
 
   try {
     const { id } = req.params
-    const { title, prompt, costumePrompt, character, place, sensitive, type, view, nudity, stability, author } = req.body
+    const { title, prompt, costumePrompt, character, place, sensitive, type, view, nudity, stability, author, editNote } = req.body
     const folderPath = path.join(COSTUME_FOLDER_PATH, id)
     const metaPath = path.join(folderPath, 'meta.json')
     const promptPath = path.join(folderPath, 'prompt.txt')
 
     if (!fs.existsSync(folderPath)) {
       return res.status(404).json({ error: 'Costume folder not found' })
+    }
+
+    // Snapshot old prompt.txt for diff
+    let oldPrompt = ''
+    if (fs.existsSync(promptPath)) {
+      try { oldPrompt = fs.readFileSync(promptPath, 'utf-8') } catch { /* ignore */ }
     }
 
     // Update prompt.txt (scene prompt)
@@ -1068,6 +1179,7 @@ app.put('/api/costumes/:id', authMiddleware, (req, res) => {
     if (fs.existsSync(metaPath)) {
       meta = JSON.parse(fs.readFileSync(metaPath, 'utf-8'))
     }
+    const oldMeta = JSON.parse(JSON.stringify(meta))
 
     // Update meta fields if provided
     if (title !== undefined) meta.title = title
@@ -1083,6 +1195,22 @@ app.put('/api/costumes/:id', authMiddleware, (req, res) => {
 
     writeJsonAtomic(metaPath, meta)
 
+    try {
+      const metaFields = ['title', 'costumePrompt', 'character', 'place', 'sensitive', 'type', 'view', 'nudity', 'stability', 'author']
+      const changedFields = diffMeta(oldMeta, meta, metaFields)
+      if (prompt !== undefined && prompt !== oldPrompt) changedFields.push('prompt')
+      if (changedFields.length || (editNote && String(editNote).trim())) {
+        const thumbPath = path.join(folderPath, '0.webp')
+        let thumbnailUrl = ''
+        if (PUBLIC_BASE_URL && fs.existsSync(thumbPath)) {
+          const mtime = fs.statSync(thumbPath).mtimeMs
+          thumbnailUrl = `${PUBLIC_BASE_URL}/${COSTUME_FOLDER_NAME}/${id}/0.webp?v=${mtime}`
+        }
+        sendDiscordNotification('edit_costume', { ...meta, id, changedFields, editNote, thumbnailUrl })
+      }
+    } catch (notifyErr) {
+      console.error('[discord] failed to dispatch edit_costume:', notifyErr.message)
+    }
 
     res.json({ success: true, message: 'Costume updated successfully' })
   } catch (error) {
@@ -1569,8 +1697,9 @@ app.put('/api/fn-loras/:id', authMiddleware, (req, res) => {
     if (fs.existsSync(metaPath)) {
       meta = JSON.parse(fs.readFileSync(metaPath, 'utf-8'))
     }
+    const oldMeta = JSON.parse(JSON.stringify(meta))
 
-    const { title, subTitle, type, model, link, prompt, stability, sensitive, weight } = req.body
+    const { title, subTitle, type, model, link, prompt, stability, sensitive, weight, editNote } = req.body
     if (title !== undefined) meta.title = title
     if (subTitle !== undefined) meta['sub-title'] = subTitle
     if (type !== undefined) meta.type = type
@@ -1582,6 +1711,22 @@ app.put('/api/fn-loras/:id', authMiddleware, (req, res) => {
     if (weight !== undefined) meta.weight = weight !== null ? parseFloat(weight) : null
 
     writeJsonAtomic(metaPath, meta)
+
+    try {
+      const fields = ['title', 'sub-title', 'type', 'model', 'link', 'prompt', 'stability', 'sensitive', 'weight']
+      const changedFields = diffMeta(oldMeta, meta, fields)
+      if (changedFields.length || (editNote && String(editNote).trim())) {
+        const thumbPath = path.join(fnLoraPath, '0.png')
+        let thumbnailUrl = ''
+        if (PUBLIC_BASE_URL && fs.existsSync(thumbPath)) {
+          const mtime = fs.statSync(thumbPath).mtimeMs
+          thumbnailUrl = `${PUBLIC_BASE_URL}/${LORA_FOLDER_NAME}/functional/${id}/0.png?v=${mtime}`
+        }
+        sendDiscordNotification('edit_fn_lora', { ...meta, id, changedFields, editNote, thumbnailUrl })
+      }
+    } catch (notifyErr) {
+      console.error('[discord] failed to dispatch edit_fn_lora:', notifyErr.message)
+    }
 
     res.json({ success: true, meta })
   } catch (error) {
@@ -1871,9 +2016,10 @@ app.put('/api/loras/:id', authMiddleware, (req, res) => {
     if (fs.existsSync(metaPath)) {
       meta = JSON.parse(fs.readFileSync(metaPath, 'utf-8'))
     }
+    const oldMeta = JSON.parse(JSON.stringify(meta))
 
     // Update allowed fields
-    const { character, cloth, company, group, gender, characterCount, model, link, prompt } = req.body
+    const { character, cloth, company, group, gender, characterCount, model, link, prompt, editNote } = req.body
     if (character !== undefined) meta.character = character
     if (cloth !== undefined) meta.cloth = cloth
     if (company !== undefined) meta.company = company
@@ -1886,6 +2032,24 @@ app.put('/api/loras/:id', authMiddleware, (req, res) => {
 
     writeJsonAtomic(metaPath, meta)
 
+    // Fire edit notification (skip if pre-thumbnail: avoid double-ping with new_lora)
+    try {
+      if (meta.discordNotified) {
+        const fields = ['character', 'cloth', 'company', 'group', 'gender', 'characterCount', 'model', 'link', 'prompt']
+        const changedFields = diffMeta(oldMeta, meta, fields)
+        if (changedFields.length || (editNote && String(editNote).trim())) {
+          const thumbPath = path.join(loraPath, '0.png')
+          let thumbnailUrl = ''
+          if (PUBLIC_BASE_URL && fs.existsSync(thumbPath)) {
+            const mtime = fs.statSync(thumbPath).mtimeMs
+            thumbnailUrl = `${PUBLIC_BASE_URL}/${LORA_FOLDER_NAME}/character/${id}/0.png?v=${mtime}`
+          }
+          sendDiscordNotification('edit_lora', { ...meta, id, changedFields, editNote, thumbnailUrl })
+        }
+      }
+    } catch (notifyErr) {
+      console.error('[discord] failed to dispatch edit_lora:', notifyErr.message)
+    }
 
     res.json({ success: true, meta })
   } catch (error) {
@@ -2390,7 +2554,7 @@ app.get('/api/prompts/fields', (req, res) => {
 app.put('/api/prompts/:id', authMiddleware, (req, res) => {
   try {
     const { id } = req.params
-    const { title, prompt, negativePrompt, character, place, sensitive, type, view, nudity, stability, author, usedFnLoras } = req.body
+    const { title, prompt, negativePrompt, character, place, sensitive, type, view, nudity, stability, author, usedFnLoras, editNote } = req.body
     const folderPath = path.join(PROMPT_FOLDER_PATH, id)
     const metaPath = path.join(folderPath, 'meta.json')
     const promptPath = path.join(folderPath, 'prompt.txt')
@@ -2398,6 +2562,16 @@ app.put('/api/prompts/:id', authMiddleware, (req, res) => {
 
     if (!fs.existsSync(folderPath)) {
       return res.status(404).json({ error: 'Prompt folder not found' })
+    }
+
+    // Snapshot old prompt / negative for diff
+    let oldPrompt = ''
+    let oldNegative = ''
+    if (fs.existsSync(promptPath)) {
+      try { oldPrompt = fs.readFileSync(promptPath, 'utf-8') } catch { /* ignore */ }
+    }
+    if (fs.existsSync(negativePath)) {
+      try { oldNegative = fs.readFileSync(negativePath, 'utf-8') } catch { /* ignore */ }
     }
 
     // Update prompt.txt
@@ -2420,6 +2594,7 @@ app.put('/api/prompts/:id', authMiddleware, (req, res) => {
     if (fs.existsSync(metaPath)) {
       meta = JSON.parse(fs.readFileSync(metaPath, 'utf-8'))
     }
+    const oldMeta = JSON.parse(JSON.stringify(meta))
 
     // Update meta fields if provided
     if (title !== undefined) meta.title = title
@@ -2435,6 +2610,23 @@ app.put('/api/prompts/:id', authMiddleware, (req, res) => {
 
     writeJsonAtomic(metaPath, meta)
 
+    try {
+      const metaFields = ['title', 'character', 'place', 'sensitive', 'type', 'view', 'nudity', 'stability', 'author', 'usedFnLoras']
+      const changedFields = diffMeta(oldMeta, meta, metaFields)
+      if (prompt !== undefined && prompt !== oldPrompt) changedFields.push('prompt')
+      if (negativePrompt !== undefined && (negativePrompt || '') !== oldNegative) changedFields.push('negativePrompt')
+      if (changedFields.length || (editNote && String(editNote).trim())) {
+        const thumbPath = path.join(folderPath, '0.webp')
+        let thumbnailUrl = ''
+        if (PUBLIC_BASE_URL && fs.existsSync(thumbPath)) {
+          const mtime = fs.statSync(thumbPath).mtimeMs
+          thumbnailUrl = `${PUBLIC_BASE_URL}/${PROMPT_FOLDER_NAME}/${id}/0.webp?v=${mtime}`
+        }
+        sendDiscordNotification('edit_prompt', { ...meta, id, changedFields, editNote, thumbnailUrl })
+      }
+    } catch (notifyErr) {
+      console.error('[discord] failed to dispatch edit_prompt:', notifyErr.message)
+    }
 
     res.json({ success: true, message: 'Prompt updated successfully' })
   } catch (error) {
@@ -3620,6 +3812,15 @@ app.put('/api/requests/:id', verifyToken, (req, res) => {
 
     writeJsonAtomic(metaPath, updatedMeta)
 
+    try {
+      const changedFields = diffMeta(meta, updatedMeta, REQUEST_ADMIN_FIELDS)
+      const editNote = req.body.editNote
+      if (changedFields.length || (editNote && String(editNote).trim())) {
+        sendDiscordNotification('edit_request', { ...updatedMeta, id, changedFields, editNote })
+      }
+    } catch (notifyErr) {
+      console.error('[discord] failed to dispatch edit_request:', notifyErr.message)
+    }
 
     res.json(updatedMeta)
   } catch (error) {
@@ -3797,6 +3998,7 @@ app.put('/api/workflows/:id', authMiddleware, (req, res) => {
     if (fs.existsSync(metaPath)) {
       meta = JSON.parse(fs.readFileSync(metaPath, 'utf-8'))
     }
+    const oldMeta = JSON.parse(JSON.stringify(meta))
 
     // Update allowed fields
     if (req.body.name !== undefined) meta.name = req.body.name
@@ -3806,6 +4008,16 @@ app.put('/api/workflows/:id', authMiddleware, (req, res) => {
 
     writeJsonAtomic(metaPath, meta)
 
+    try {
+      const fields = ['name', 'description', 'workflowFile', 'attachments']
+      const changedFields = diffMeta(oldMeta, meta, fields)
+      const editNote = req.body.editNote
+      if (changedFields.length || (editNote && String(editNote).trim())) {
+        sendDiscordNotification('edit_workflow', { ...meta, id, changedFields, editNote })
+      }
+    } catch (notifyErr) {
+      console.error('[discord] failed to dispatch edit_workflow:', notifyErr.message)
+    }
 
     res.json(meta)
   } catch (error) {

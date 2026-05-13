@@ -106,6 +106,11 @@ function App() {
   const [isCreatingPrompt, setIsCreatingPrompt] = useState(false)
   const [editPromptData, setEditPromptData] = useState(null)
 
+  // Shared "change note" for any edit modal. Sent as `editNote` in PUT bodies
+  // so the Discord notification can describe what changed in the admin's
+  // own words. Cleared on every modal close.
+  const [editNote, setEditNote] = useState('')
+
   // Costume edit mode
   const [isEditingCostume, setIsEditingCostume] = useState(false)
   const [isCreatingCostume, setIsCreatingCostume] = useState(false)
@@ -598,6 +603,7 @@ function App() {
     setIsCreatingPrompt(false)
     setEditPromptData(null)
     setPendingImages([null, null])
+    setEditNote('')
   }
 
   const handleUpdatePrompt = async () => {
@@ -646,7 +652,8 @@ function App() {
             nudity: editPromptData.editedNudity,
             stability: parseInt(editPromptData.editedStability),
             author: editPromptData.editedAuthor,
-            usedFnLoras: editPromptData.editedUsedFnLoras || []
+            usedFnLoras: editPromptData.editedUsedFnLoras || [],
+            editNote
           })
         })
 
@@ -683,7 +690,8 @@ function App() {
             nudity: editPromptData.editedNudity,
             stability: parseInt(editPromptData.editedStability),
             author: editPromptData.editedAuthor,
-            usedFnLoras: editPromptData.editedUsedFnLoras || []
+            usedFnLoras: editPromptData.editedUsedFnLoras || [],
+            editNote
           })
         })
 
@@ -821,6 +829,7 @@ function App() {
     setIsCreatingCostume(false)
     setEditCostumeData(null)
     setPendingCostumeImages([null, null])
+    setEditNote('')
   }
 
   const handleUpdateCostume = async () => {
@@ -896,7 +905,8 @@ function App() {
             view: editCostumeData.editedView,
             nudity: editCostumeData.editedNudity,
             stability: parseInt(editCostumeData.editedStability),
-            author: editCostumeData.editedAuthor
+            author: editCostumeData.editedAuthor,
+            editNote
           })
         })
 
@@ -1055,6 +1065,7 @@ function App() {
     setPendingLoraVersionImages({})
     setPendingLoraSafetensors({})
     setEditLoraSelectedVersion(0)
+    setEditNote('')
   }
 
   const handleUpdateLora = async () => {
@@ -1122,7 +1133,8 @@ function App() {
             characterCount: parseInt(editLoraData.editedCharacterCount) || 1,
             model: modelData,
             link: editLoraData.editedLink,
-            prompt: editLoraData.editedPrompt
+            prompt: editLoraData.editedPrompt,
+            editNote
           })
         })
         if (!response.ok) throw new Error('Failed to update LoRA')
@@ -1307,6 +1319,7 @@ function App() {
     setPendingFnLoraVersionImages({})
     setPendingFnLoraSafetensors({})
     setEditFnLoraSelectedVersion(0)
+    setEditNote('')
   }
 
   const handleUpdateFnLora = async () => {
@@ -1371,7 +1384,8 @@ function App() {
             prompt: editFnLoraData.editedPrompt,
             stability: parseInt(editFnLoraData.editedStability),
             sensitive: editFnLoraData.editedSensitive,
-            weight: editFnLoraData.editedWeight !== '' ? parseFloat(editFnLoraData.editedWeight) : null
+            weight: editFnLoraData.editedWeight !== '' ? parseFloat(editFnLoraData.editedWeight) : null,
+            editNote
           })
         })
         if (!response.ok) throw new Error('Failed to update Fn LoRA')
@@ -3888,6 +3902,22 @@ function App() {
               </div>
             </div>
 
+            {!isCreatingPrompt && (
+              <div className="edit-note-block">
+                <label className="edit-note-label" htmlFor="edit-note-prompt">Change note (optional)</label>
+                <div className="edit-note-hint">
+                  Shown in the Discord notification. Leave blank to auto-list the changed fields.
+                </div>
+                <textarea
+                  id="edit-note-prompt"
+                  value={editNote}
+                  onChange={(e) => setEditNote(e.target.value)}
+                  maxLength={500}
+                  placeholder="Describe what you changed and why…"
+                />
+              </div>
+            )}
+
             {/* Action Buttons */}
             <div className="edit-actions">
               <button className="cancel-button" onClick={handleCloseEditPrompt}>
@@ -4123,6 +4153,22 @@ function App() {
                 />
               </div>
             </div>
+
+            {!isCreatingCostume && (
+              <div className="edit-note-block">
+                <label className="edit-note-label" htmlFor="edit-note-costume">Change note (optional)</label>
+                <div className="edit-note-hint">
+                  Shown in the Discord notification. Leave blank to auto-list the changed fields.
+                </div>
+                <textarea
+                  id="edit-note-costume"
+                  value={editNote}
+                  onChange={(e) => setEditNote(e.target.value)}
+                  maxLength={500}
+                  placeholder="Describe what you changed and why…"
+                />
+              </div>
+            )}
 
             {/* Action Buttons */}
             <div className="edit-actions">
@@ -4462,6 +4508,22 @@ function App() {
               }}
             />
 
+            {!isCreatingLora && (
+              <div className="edit-note-block">
+                <label className="edit-note-label" htmlFor="edit-note-lora">Change note (optional)</label>
+                <div className="edit-note-hint">
+                  Shown in the Discord notification. Leave blank to auto-list the changed fields.
+                </div>
+                <textarea
+                  id="edit-note-lora"
+                  value={editNote}
+                  onChange={(e) => setEditNote(e.target.value)}
+                  maxLength={500}
+                  placeholder="Describe what you changed and why…"
+                />
+              </div>
+            )}
+
             {/* Actions */}
             <div className="edit-actions">
               {!isCreatingLora && (
@@ -4793,6 +4855,22 @@ function App() {
                 <option key={val} value={val} />
               ))}
             </datalist>
+
+            {!isCreatingFnLora && (
+              <div className="edit-note-block">
+                <label className="edit-note-label" htmlFor="edit-note-fnlora">Change note (optional)</label>
+                <div className="edit-note-hint">
+                  Shown in the Discord notification. Leave blank to auto-list the changed fields.
+                </div>
+                <textarea
+                  id="edit-note-fnlora"
+                  value={editNote}
+                  onChange={(e) => setEditNote(e.target.value)}
+                  maxLength={500}
+                  placeholder="Describe what you changed and why…"
+                />
+              </div>
+            )}
 
             {/* Actions */}
             <div className="edit-actions">
