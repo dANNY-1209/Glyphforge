@@ -38,6 +38,11 @@
         "hash": "9728008",
         "type": "refactor",
         "message": "Admin Users tab redesigned with side-by-side Pending requests and Whitelist columns"
+      },
+      {
+        "hash": "961c557",
+        "type": "feat",
+        "message": "Admins can now open a submitter's Discord profile by clicking the request card"
       }
     ]
   },

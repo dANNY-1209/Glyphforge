@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react'
 import './Request.css'
+import LoginButton from '../Auth/LoginButton'
 
 function Request({ isLoggedIn, adminMode, onAdminLogout, onAdminModeToggle }) {
   const [requests, setRequests] = useState([])
@@ -676,6 +677,18 @@ function Request({ isLoggedIn, adminMode, onAdminLogout, onAdminModeToggle }) {
               >
                 ✎
               </button>
+              {request.submittedBy && (
+                <button
+                  className="admin-button"
+                  onClick={() => {
+                    setSelectedSubmitter(request.submittedBy)
+                    setShowSubmitterModal(true)
+                  }}
+                  title="View submitter Discord profile"
+                >
+                  👤
+                </button>
+              )}
               <button
                 className="admin-button delete-button"
                 onClick={() => handleDelete(request.id)}
@@ -698,8 +711,8 @@ function Request({ isLoggedIn, adminMode, onAdminLogout, onAdminModeToggle }) {
           <p>Submit or view LoRA and Prompt requests</p>
         </div>
         <div className="request-header-actions">
-          {/* Discord login + admin toggle are handled by the global header
-              (LoginButton). This tab only owns the "New Request" CTA. */}
+          {/* Discord login + admin toggle */}
+          <LoginButton adminMode={adminMode} onAdminModeToggle={onAdminModeToggle} />
           <button className="submit-request-button" onClick={handleOpenModal}>
             + New Request
           </button>
@@ -1110,9 +1123,17 @@ function Request({ isLoggedIn, adminMode, onAdminLogout, onAdminModeToggle }) {
               </div>
             </div>
 
-            {/* Admin-only: Submitter info */}
+            {/* Admin-only: Submitter info — click to open full submitter modal */}
             {isLoggedIn && selectedRequest.submittedBy && (
-              <div className="detail-modal-submitter">
+              <div
+                className="detail-modal-submitter"
+                onClick={() => {
+                  setSelectedSubmitter(selectedRequest.submittedBy)
+                  setShowSubmitterModal(true)
+                }}
+                style={{ cursor: 'pointer' }}
+                title="Click to view full Discord profile"
+              >
                 <div className="detail-submitter-header">Submitted by</div>
                 <div className="detail-submitter-info">
                   {selectedRequest.submittedBy.avatar ? (

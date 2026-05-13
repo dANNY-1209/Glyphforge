@@ -1298,6 +1298,11 @@
   border-radius: 10px;
   padding: 0.85rem 1rem;
   margin-bottom: 1rem;
+  transition: background 0.15s, border-color 0.15s;
+}
+.detail-modal-submitter:hover {
+  background: rgba(88, 101, 242, 0.16);
+  border-color: rgba(88, 101, 242, 0.45);
 }
 
 .detail-submitter-header {
