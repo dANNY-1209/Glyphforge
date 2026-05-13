@@ -3397,8 +3397,8 @@ label {
 .edit-note-block {
   margin: 12px 0;
   padding: 10px 12px;
-  border-left: 3px solid #66ccff;
-  background: rgba(102, 204, 255, 0.06);
+  border-left: 3px solid var(--accent-primary, #66ccff);
+  background: var(--bg-tertiary, rgba(255, 255, 255, 0.03));
   border-radius: 4px;
 }
 .edit-note-block .edit-note-label {
@@ -3406,11 +3406,11 @@ label {
   font-size: 0.85rem;
   font-weight: 600;
   margin-bottom: 4px;
-  color: #66ccff;
+  color: var(--accent-primary, #66ccff);
 }
 .edit-note-block .edit-note-hint {
   font-size: 0.75rem;
-  opacity: 0.7;
+  color: var(--text-secondary, rgba(255, 255, 255, 0.55));
   margin-bottom: 6px;
 }
 .edit-note-block textarea {
@@ -3419,7 +3419,19 @@ label {
   resize: vertical;
   font-family: inherit;
   font-size: 0.9rem;
-  padding: 6px 8px;
-  border-radius: 4px;
+  padding: 8px 10px;
+  border-radius: 6px;
   box-sizing: border-box;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-hover, rgba(255, 255, 255, 0.12));
+  color: var(--text-primary);
+  transition: border-color 0.2s ease;
+}
+.edit-note-block textarea:focus {
+  outline: none;
+  border-color: var(--accent-primary, #66ccff);
+}
+.edit-note-block textarea::placeholder {
+  color: var(--text-secondary, rgba(255, 255, 255, 0.4));
+  opacity: 0.7;
 }

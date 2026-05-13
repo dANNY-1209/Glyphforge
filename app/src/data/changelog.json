@@ -6,6 +6,12 @@
         "hash": "f083f64",
         "type": "feat",
         "message": "Discord notifications now fire on edits (LoRA, Fn LoRA, Prompt, Costume, Workflow, Request) — with an optional change-note sidebar in every edit modal"
+      },
+      {
+        "hash": "eb56456",
+        "type": "fix",
+        "message": "Change-note input in edit modals now matches the dark modal theme",
+        "hidden": true
       }
     ]
   },
