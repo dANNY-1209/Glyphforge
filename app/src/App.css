@@ -3586,7 +3586,7 @@ label {
 /* ============================================================
  * Admin users panel
  * ============================================================ */
-.admin-users-panel { max-width: 900px; margin: 24px auto; padding: 20px; }
+.admin-users-panel { max-width: 1280px; margin: 24px auto; padding: 20px; }
 .admin-users-panel h2 { margin-top: 28px; margin-bottom: 12px; }
 .admin-users-panel .muted { color: var(--text-secondary, rgba(255,255,255,0.55)); font-weight: normal; }
 .admin-users-panel .small { font-size: 0.8rem; }
@@ -3600,30 +3600,79 @@ label {
   padding: 8px 10px;
   font-family: inherit;
 }
-.request-list, .user-list { list-style: none; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.request-list, .user-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 10px; width: 100%; }
 .request-card, .user-card {
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-hover, rgba(255,255,255,0.10));
+  background: var(--bg-secondary, rgba(255,255,255,0.04));
+  border: 1px solid var(--border, rgba(255,255,255,0.08));
   border-radius: 8px;
-  padding: 12px 14px;
+  padding: 14px 16px;
+  margin-bottom: 0;
+  width: 100%;
+  box-sizing: border-box;
 }
-.request-card-head, .user-card-head { display: flex; gap: 12px; align-items: center; }
-.request-card-head .avatar, .user-card-head .avatar { width: 40px; height: 40px; border-radius: 50%; object-fit: cover; }
+.request-card-head, .user-card-head { display: flex; gap: 12px; align-items: flex-start; width: 100%; }
+.request-card-head > div, .user-card-head > div { flex: 1 1 auto; min-width: 0; }
+.request-card-head .avatar, .user-card-head .avatar { width: 40px; height: 40px; border-radius: 50%; object-fit: cover; flex-shrink: 0; }
 .request-card .name, .user-card .name { font-weight: 600; }
-.request-card blockquote { margin: 8px 0 8px 52px; padding: 6px 10px; border-left: 3px solid var(--accent-primary, #66ccff); background: var(--bg-tertiary, rgba(255,255,255,0.03)); }
-.request-card .actions, .user-card .actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+.request-card blockquote { margin: 10px 0 0 0; padding: 8px 12px; border-left: 3px solid var(--accent-primary, #66ccff); background: var(--bg-tertiary, rgba(255,255,255,0.03)); border-radius: 0 6px 6px 0; white-space: pre-wrap; word-break: break-word; }
+.request-card .actions, .user-card .actions { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
 .request-card .actions button, .user-card .actions button, .add-direct-form button {
   background: var(--bg-tertiary, rgba(255,255,255,0.08));
   border: 1px solid var(--border-hover, rgba(255,255,255,0.15));
   color: var(--text-primary);
   border-radius: 6px;
-  padding: 6px 12px;
+  padding: 7px 14px;
   cursor: pointer;
   font-size: 0.85rem;
+  font-weight: 500;
 }
+.request-card .actions button.primary, .user-card .actions button.primary { background: rgba(51, 204, 102, 0.14); border-color: rgba(51, 204, 102, 0.45); color: #7fdf9c; }
+.request-card .actions button.primary:hover { background: rgba(51, 204, 102, 0.22); border-color: rgba(51, 204, 102, 0.7); }
 .request-card .actions button:hover, .user-card .actions button:hover { border-color: var(--accent-primary, #66ccff); }
 .request-card .actions button.danger, .user-card .actions button.danger { color: #ff9999; }
 .request-card .actions button.danger:hover, .user-card .actions button.danger:hover { border-color: #ff5555; }
+.admin-users-panel .admin-columns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 28px;
+  align-items: start;
+}
+@media (max-width: 900px) {
+  .admin-users-panel .admin-columns {
+    grid-template-columns: 1fr;
+  }
+}
+.admin-users-panel .admin-column { min-width: 0; display: flex; flex-direction: column; width: 100%; }
+.admin-users-panel .admin-column h2 { margin-top: 0; }
+.admin-users-panel .scroll-list-wrap {
+  max-height: 70vh;
+  overflow-y: auto;
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 8px;
+  padding: 8px;
+  background: rgba(255,255,255,0.015);
+  box-sizing: border-box;
+  width: 100%;
+}
+.admin-users-panel .scroll-list-wrap > ul,
+.admin-users-panel .request-list,
+.admin-users-panel .user-list {
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.admin-users-panel .request-card,
+.admin-users-panel .user-card {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  margin: 0 0 10px 0;
+}
+.admin-users-panel .request-card:last-child,
+.admin-users-panel .user-card:last-child { margin-bottom: 0; }
+.admin-users-panel .scroll-list-wrap ul { margin: 0; padding: 0; list-style: none; }
 .badge {
   display: inline-block;
   font-size: 0.7rem;

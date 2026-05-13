@@ -6,14 +6,26 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useAuth } from '../../auth/AuthContext'
 
+function defaultAvatarUrl(discordId) {
+  if (!discordId) return null
+  // Discord embed default avatars: 6 colored silhouettes keyed by ID mod 6.
+  // For new-style usernames (Discord ID-based), the formula is (id >> 22) % 6.
+  // We use BigInt to handle the 64-bit snowflake safely.
+  try {
+    const idx = Number((BigInt(discordId) >> 22n) % 6n)
+    return `https://cdn.discordapp.com/embed/avatars/${idx}.png`
+  } catch {
+    return `https://cdn.discordapp.com/embed/avatars/0.png`
+  }
+}
 function avatarUrl(u) {
-  if (!u || !u.discordId) return null
+  if (!u || !u.discordId) return defaultAvatarUrl(u?.discordId)
   const av = u.profile?.avatar || u.avatar
-  if (!av) return null
+  if (!av) return defaultAvatarUrl(u.discordId)
   return `https://cdn.discordapp.com/avatars/${u.discordId}/${av}.png?size=64`
 }
 function displayName(u) {
-  return u.profile?.globalName || u.profile?.username || u.username || u.globalName || u.discordId
+  return u.profile?.globalName || u.profile?.username || u.username || u.globalName || `User ${String(u.discordId || '').slice(-4)}`
 }
 
 export default function AdminUsersPanel() {
@@ -51,7 +63,7 @@ export default function AdminUsersPanel() {
 
   const review = async (id, decision) => {
     const note = decision === 'denied'
-      ? (prompt('Optional note for the user (visible to them):') || '')
+      ? (prompt('Optional note to the user (they will see this):') || '')
       : ''
     setReviewing((s) => ({ ...s, [id]: true }))
     try {
@@ -123,72 +135,105 @@ export default function AdminUsersPanel() {
 
   return (
     <div className="admin-users-panel">
-      <h2>Pending requests <span className="muted">({requests.length})</span></h2>
-      {requests.length === 0 ? (
-        <p className="muted">No pending requests.</p>
-      ) : (
-        <ul className="request-list">
-          {requests.map((r) => (
-            <li key={r.id} className="request-card">
-              <div className="request-card-head">
-                {avatarUrl({ discordId: r.discordId, profile: r.profile }) && (
-                  <img src={avatarUrl({ discordId: r.discordId, profile: r.profile })} alt="" className="avatar" />
-                )}
-                <div>
-                  <div className="name">{displayName({ discordId: r.discordId, profile: r.profile })}</div>
-                  <div className="muted small">{r.discordId} · {new Date(r.createdAt).toLocaleString()}</div>
-                </div>
-              </div>
-              {r.reason && <blockquote>{r.reason}</blockquote>}
-              <div className="actions">
-                <button disabled={!!reviewing[r.id]} onClick={() => review(r.id, 'approved')}>✅ Approve</button>
-                <button disabled={!!reviewing[r.id]} className="danger" onClick={() => review(r.id, 'denied')}>⛔ Deny</button>
-              </div>
-            </li>
-          ))}
-        </ul>
-      )}
+      <div className="admin-columns">
+        <section className="admin-column">
+          <h2>Pending requests <span className="muted">({requests.length})</span></h2>
+          {requests.length === 0 ? (
+            <p className="muted">No pending requests.</p>
+          ) : (
+            <div className="scroll-list-wrap">
+              <ul className="request-list">
+                {requests.map((r) => (
+                  <li key={r.id} className="request-card">
+                    <div className="request-card-head">
+                      {avatarUrl({ discordId: r.discordId, profile: r.profile }) && (
+                        <img src={avatarUrl({ discordId: r.discordId, profile: r.profile })} alt="" className="avatar" />
+                      )}
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div className="name">
+                          {r.profile?.globalName || r.profile?.username || r.discordId}
+                          {r.profile?.username && r.profile?.globalName && r.profile.username !== r.profile.globalName && (
+                            <span className="muted small" style={{ marginLeft: 8, fontWeight: 'normal' }}>@{r.profile.username}</span>
+                          )}
+                        </div>
+                        <div className="muted small" style={{ wordBreak: 'break-all' }}>
+                          ID: <code>{r.discordId}</code>
+                        </div>
+                        <div className="muted small">
+                          {new Date(r.createdAt).toLocaleString()}
+                        </div>
+                        <div className="muted small" style={{ marginTop: 2 }}>
+                          <a
+                            href={`discord://-/users/${r.discordId}`}
+                            onClick={(e) => { e.preventDefault(); navigator.clipboard?.writeText(r.discordId); }}
+                            style={{ color: 'var(--accent-primary, #66ccff)', cursor: 'pointer' }}
+                            title="Click to copy Discord ID"
+                          >
+                            Copy ID
+                          </a>
+                        </div>
+                      </div>
+                    </div>
+                    {r.reason && <blockquote>{r.reason}</blockquote>}
+                    <div className="actions">
+                      <button className="primary" disabled={!!reviewing[r.id]} onClick={() => review(r.id, 'approved')}>Approve</button>
+                      <button disabled={!!reviewing[r.id]} className="danger" onClick={() => review(r.id, 'denied')}>Deny</button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </section>
 
-      <h2>Whitelist <span className="muted">({users.length})</span></h2>
-      <form className="add-direct-form" onSubmit={addDirect}>
-        <input
-          type="text"
-          value={addId}
-          onChange={(e) => setAddId(e.target.value)}
-          placeholder="Discord ID"
-          maxLength={20}
-        />
-        <button type="submit" disabled={busy}>Add directly</button>
-      </form>
-      <ul className="user-list">
-        {users.map((u) => (
-          <li key={u.discordId} className="user-card">
-            <div className="user-card-head">
-              {avatarUrl(u) && <img src={avatarUrl(u)} alt="" className="avatar" />}
-              <div>
-                <div className="name">
-                  {displayName(u)}
-                  {u.isSuperAdmin && <span className="badge super">Super-admin</span>}
-                  {!u.isSuperAdmin && u.isAdmin && <span className="badge admin">Admin</span>}
-                  {!u.isAdmin && u.isWhitelisted && <span className="badge member">Member</span>}
-                </div>
-                <div className="muted small">{u.discordId}{u.profile?.lastSeen ? ` · last seen ${new Date(u.profile.lastSeen).toLocaleDateString()}` : ''}</div>
-              </div>
-            </div>
-            <div className="actions">
-              {!u.isAdmin && (
-                <button disabled={busy} onClick={() => promote(u.discordId)}>👑 Promote</button>
-              )}
-              {u.isAdmin && !u.isSuperAdmin && (
-                <button disabled={busy} className="danger" onClick={() => demote(u.discordId)}>⬇️ Demote</button>
-              )}
-              {!u.isSuperAdmin && (
-                <button disabled={busy} className="danger" onClick={() => revoke(u.discordId)}>🚫 Revoke</button>
-              )}
-            </div>
-          </li>
-        ))}
-      </ul>
+        <section className="admin-column">
+          <h2>Whitelist <span className="muted">({users.length})</span></h2>
+          <form className="add-direct-form" onSubmit={addDirect}>
+            <input
+              type="text"
+              value={addId}
+              onChange={(e) => setAddId(e.target.value)}
+              placeholder="Discord ID"
+              maxLength={20}
+            />
+            <button type="submit" disabled={busy}>Add directly</button>
+          </form>
+          <div className="scroll-list-wrap">
+            <ul className="user-list">
+              {users.map((u) => (
+                <li key={u.discordId} className="user-card">
+                  <div className="user-card-head">
+                    {avatarUrl(u) && <img src={avatarUrl(u)} alt="" className="avatar" />}
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div className="name">
+                        {displayName(u)}
+                        {u.isSuperAdmin && <span className="badge super">Super-admin</span>}
+                        {!u.isSuperAdmin && u.isAdmin && <span className="badge admin">Admin</span>}
+                        {!u.isAdmin && u.isWhitelisted && <span className="badge member">Member</span>}
+                      </div>
+                      <div className="muted small" style={{ wordBreak: 'break-all' }}>{u.discordId}</div>
+                      {u.profile?.lastSeen && (
+                        <div className="muted small">last seen {new Date(u.profile.lastSeen).toLocaleDateString()}</div>
+                      )}
+                    </div>
+                  </div>
+                  <div className="actions">
+                    {!u.isAdmin && (
+                      <button disabled={busy} onClick={() => promote(u.discordId)}>Promote</button>
+                    )}
+                    {u.isAdmin && !u.isSuperAdmin && (
+                      <button disabled={busy} className="danger" onClick={() => demote(u.discordId)}>Demote</button>
+                    )}
+                    {!u.isSuperAdmin && (
+                      <button disabled={busy} className="danger" onClick={() => revoke(u.discordId)}>Revoke</button>
+                    )}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </section>
+      </div>
     </div>
   )
 }
