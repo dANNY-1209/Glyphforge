@@ -28,6 +28,11 @@
         "type": "security",
         "message": "Image URLs now require whitelist access — no more guessable static paths",
         "hidden": true
+      },
+      {
+        "hash": "39ae648",
+        "type": "fix",
+        "message": "Logged-in users with stale empty-cache state now see Costume / Prompt / Fn-LoRA data correctly"
       }
     ]
   },

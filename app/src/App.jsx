@@ -218,62 +218,34 @@ function App() {
 
   // Use data cache for prompts and loras
   const promptsCache = useDataCache('prompts', async () => {
-    try {
-      const response = await fetch('/api/prompts')
-      return await response.json()
-    } catch (error) {
-      console.error('Failed to load prompts:', error)
-      // Fallback
-      try {
-        const configResponse = await fetch('/api/config')
-        const config = await configResponse.json()
-        const folderName = config.promptFolder.name
-        return [
-          { id: '0', thumbnail: `/${folderName}/0/1.png`, images: [`/${folderName}/0/1.png`, `/${folderName}/0/2.png`], prompt: '', imageOrientation: 'portrait' },
-          { id: '1', thumbnail: `/${folderName}/1/1.png`, images: [`/${folderName}/1/1.png`, `/${folderName}/1/2.png`], prompt: '', imageOrientation: 'portrait' }
-        ]
-      } catch (configError) {
-        console.error('Failed to load config:', configError)
-        return []
-      }
-    }
+    const response = await fetch('/api/prompts')
+    if (!response.ok) throw new Error(`HTTP ${response.status}`)
+    return await response.json()
   }, { revalidateOnMount: true })
 
   const lorasCache = useDataCache('loras', async () => {
-    try {
-      const response = await fetch('/api/loras')
-      return await response.json()
-    } catch (error) {
-      console.error('Failed to load LoRAs:', error)
-      return []
-    }
-  })
+    const response = await fetch('/api/loras')
+    if (!response.ok) throw new Error(`HTTP ${response.status}`)
+    return await response.json()
+  }, { revalidateOnMount: true })
 
   const costumesCache = useDataCache('costumes', async () => {
-    try {
-      const response = await fetch('/api/costumes')
-      const data = await response.json()
-      // New API returns { costumes, metadata }
-      if (data.costumes && data.metadata) {
-        return data
-      }
-      // Fallback for old API format
-      return { costumes: data, metadata: { typeOrder: [], costumeOrder: {} } }
-    } catch (error) {
-      console.error('Failed to load costumes:', error)
-      return { costumes: [], metadata: { typeOrder: [], costumeOrder: {} } }
+    const response = await fetch('/api/costumes')
+    if (!response.ok) throw new Error(`HTTP ${response.status}`)
+    const data = await response.json()
+    // New API returns { costumes, metadata }
+    if (data.costumes && data.metadata) {
+      return data
     }
-  })
+    // Fallback for old API format
+    return { costumes: data, metadata: { typeOrder: [], costumeOrder: {} } }
+  }, { revalidateOnMount: true })
 
   const fnLorasCache = useDataCache('fnLoras', async () => {
-    try {
-      const response = await fetch('/api/fn-loras')
-      return await response.json()
-    } catch (error) {
-      console.error('Failed to load Functional LoRAs:', error)
-      return []
-    }
-  })
+    const response = await fetch('/api/fn-loras')
+    if (!response.ok) throw new Error(`HTTP ${response.status}`)
+    return await response.json()
+  }, { revalidateOnMount: true })
 
   const prompts = promptsCache.data || []
   const loras = lorasCache.data || []
@@ -297,8 +269,9 @@ function App() {
     const loadNotifications = async () => {
       try {
         const response = await fetch('/api/notifications')
+        if (!response.ok) return
         const data = await response.json()
-        setNotifications(data)
+        if (data && Array.isArray(data.updates)) setNotifications(data)
       } catch (error) {
         console.error('Failed to load notifications:', error)
       }
@@ -453,9 +426,12 @@ function App() {
     const loadFieldOptions = async () => {
       try {
         const response = await fetch('/api/prompts/fields')
+        if (!response.ok) return
         const data = await response.json()
-        console.log('Loaded field options:', data) // Debug
-        setPromptFieldOptions(data)
+        if (data && typeof data === 'object' && !data.error) {
+          console.log('Loaded field options:', data) // Debug
+          setPromptFieldOptions(data)
+        }
       } catch (error) {
         console.error('Failed to load prompt field options:', error)
       }
@@ -467,8 +443,12 @@ function App() {
   useEffect(() => {
     if (prompts && prompts.length > 0) {
       fetch('/api/prompts/fields')
-        .then(res => res.json())
-        .then(data => setPromptFieldOptions(data))
+        .then(res => res.ok ? res.json() : null)
+        .then(data => {
+          if (data && typeof data === 'object' && !data.error) {
+            setPromptFieldOptions(data)
+          }
+        })
         .catch(err => console.error('Failed to reload field options:', err))
     }
   }, [prompts])

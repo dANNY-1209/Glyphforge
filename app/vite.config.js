@@ -28,6 +28,9 @@ try {
 
 export default defineConfig({
   plugins: [react()],
+  define: {
+    __BUILD_TIME__: JSON.stringify(new Date().toISOString()),
+  },
   server: {
     host: '0.0.0.0',
     port: 5173,

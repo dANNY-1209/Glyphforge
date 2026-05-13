@@ -1,5 +1,29 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 
+// Bump this whenever the on-disk cache shape changes or a deploy needs to
+// invalidate every persisted cache (e.g. because a prior bug poisoned
+// localStorage with empty arrays / error objects). On first import after a
+// version bump, every `cache_*` / `cache_meta_*` entry is wiped.
+const CACHE_SCHEMA_VERSION = 3
+const SCHEMA_KEY = 'cache_schema_version'
+if (typeof window !== 'undefined') {
+  try {
+    const stored = parseInt(localStorage.getItem(SCHEMA_KEY) || '0', 10)
+    if (stored !== CACHE_SCHEMA_VERSION) {
+      const toRemove = []
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i)
+        if (k && (k.startsWith('cache_') && k !== SCHEMA_KEY)) toRemove.push(k)
+      }
+      toRemove.forEach((k) => localStorage.removeItem(k))
+      localStorage.setItem(SCHEMA_KEY, String(CACHE_SCHEMA_VERSION))
+      console.log(`[useDataCache] Cache schema bumped to v${CACHE_SCHEMA_VERSION}, wiped ${toRemove.length} entries`)
+    }
+  } catch {
+    // localStorage unavailable — fine, hook will work without persistence
+  }
+}
+
 /**
  * Universal data caching hook with automatic staleness detection
  *
@@ -29,7 +53,34 @@ export function useDataCache(cacheKey, fetchFn, options = {}) {
       try {
         const stored = localStorage.getItem(STORAGE_KEY)
         if (stored) {
-          return JSON.parse(stored)
+          const parsed = JSON.parse(stored)
+          // Sanity check: discard cached error responses or empty fallbacks
+          // that may have leaked in before fetchers learned to throw on
+          // !response.ok. A real payload is either a non-empty array or an
+          // object with real data — never a bare {error: "..."} shape and
+          // never an empty array (which means the fetch failed silently and
+          // wrote an empty fallback into the cache).
+          if (Array.isArray(parsed) && parsed.length === 0) {
+            localStorage.removeItem(STORAGE_KEY)
+            localStorage.removeItem(METADATA_KEY)
+            return null
+          }
+          if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+            const keys = Object.keys(parsed)
+            if (keys.length === 1 && keys[0] === 'error') {
+              localStorage.removeItem(STORAGE_KEY)
+              localStorage.removeItem(METADATA_KEY)
+              return null
+            }
+            // Special-case the costumes shape: {costumes:[], metadata:{...}}
+            // with an empty costumes array is a silent-failure fallback.
+            if (Array.isArray(parsed.costumes) && parsed.costumes.length === 0) {
+              localStorage.removeItem(STORAGE_KEY)
+              localStorage.removeItem(METADATA_KEY)
+              return null
+            }
+          }
+          return parsed
         }
       } catch (err) {
         console.error(`Failed to load cache from localStorage for ${cacheKey}:`, err)
@@ -101,6 +152,7 @@ export function useDataCache(cacheKey, fetchFn, options = {}) {
   const checkForUpdates = useCallback(async () => {
     try {
       const response = await fetch('/api/metadata')
+      if (!response.ok) return false
       const metadata = await response.json()
 
       // Parse cache key to get the correct metadata path
@@ -163,18 +215,20 @@ export function useDataCache(cacheKey, fetchFn, options = {}) {
 
       // Get updated metadata
       const response = await fetch('/api/metadata')
-      const metadata = await response.json()
+      if (response.ok) {
+        const metadata = await response.json()
 
-      const keys = cacheKey.split('.')
-      let serverLastModified = metadata
+        const keys = cacheKey.split('.')
+        let serverLastModified = metadata
 
-      for (const key of keys) {
-        if (serverLastModified && serverLastModified[key]) {
-          serverLastModified = serverLastModified[key]
+        for (const key of keys) {
+          if (serverLastModified && serverLastModified[key]) {
+            serverLastModified = serverLastModified[key]
+          }
         }
-      }
 
-      cacheRef.current.lastModified = serverLastModified.lastModified || serverLastModified
+        cacheRef.current.lastModified = serverLastModified.lastModified || serverLastModified
+      }
 
       setData(result)
       setIsStale(false)
