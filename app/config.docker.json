@@ -22,5 +22,8 @@
   "workflowFolder": {
     "path": "/datas/workflows",
     "name": "workflows"
+  },
+  "authFolder": {
+    "path": "/datas/auth"
   }
 }

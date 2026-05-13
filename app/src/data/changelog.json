@@ -17,6 +17,11 @@
         "hash": "30546c3",
         "type": "security",
         "message": "Replaced admin password with Discord-based access control"
+      },
+      {
+        "hash": "89d5ebf",
+        "type": "fix",
+        "message": "Whitelist and admin lists no longer disappear after redeploys"
       }
     ]
   },
