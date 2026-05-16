@@ -453,14 +453,12 @@ function App() {
     }
   }, [prompts])
 
-  // Initialize selected version when LoRA is selected
+  // Initialize selected version when LoRA is selected.
+  // Honor meta.model ordering (versions are already returned in that order
+  // by the server), so the first entry is what the curator put first.
   useEffect(() => {
     if (selectedLora && selectedLora.versions && selectedLora.versions.length > 0) {
-      // Prefer illustrious version, fallback to first version
-      const illustriousVersion = selectedLora.versions.find(v =>
-        v.name.toLowerCase() === 'illustrious'
-      )
-      setSelectedLoraVersion(illustriousVersion || selectedLora.versions[0])
+      setSelectedLoraVersion(selectedLora.versions[0])
     } else {
       setSelectedLoraVersion(null)
     }

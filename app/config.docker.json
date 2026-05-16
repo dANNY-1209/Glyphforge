@@ -25,5 +25,11 @@
   },
   "authFolder": {
     "path": "/datas/auth"
+  },
+  "staticFolder": {
+    "path": "/datas/static"
+  },
+  "configFolder": {
+    "path": "/datas/config"
   }
 }

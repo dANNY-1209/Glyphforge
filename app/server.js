@@ -86,6 +86,22 @@ const AUTH_FOLDER_PATH = config.authFolder
     : path.join(__dirname, config.authFolder.path))
   : path.join(__dirname, 'auth')
 
+// Static asset dir — persona avatars and other admin-managed images. Mounted
+// publicly at `/static`, so URLs are reachable by external services (e.g.
+// Discord CDN fetching webhook avatar_url).
+const STATIC_FOLDER_PATH = config.staticFolder
+  ? (path.isAbsolute(config.staticFolder.path)
+    ? config.staticFolder.path
+    : path.join(__dirname, config.staticFolder.path))
+  : path.join(__dirname, 'static')
+
+// Config dir — admin-editable runtime config (Discord personas, etc.).
+const CONFIG_FOLDER_PATH = config.configFolder
+  ? (path.isAbsolute(config.configFolder.path)
+    ? config.configFolder.path
+    : path.join(__dirname, config.configFolder.path))
+  : path.join(__dirname, 'config')
+
 const app = express()
 const PORT = 3001
 
@@ -523,9 +539,51 @@ function buildDiscordEmbed(eventType, data) {
   if (url) embed.url = url
   if (embed_image_url) embed.thumbnail = { url: embed_image_url }
 
+  const persona = getDiscordPersona(eventType)
   return {
-    username: 'Glyphforge',
+    username: persona.username,
+    avatar_url: persona.avatar_url,
     embeds: [embed],
+  }
+}
+
+// ─── Discord persona config (admin-editable JSON) ───────────────────────────
+// Per-event-type webhook username + avatar_url overrides. Lives in
+// `${CONFIG_FOLDER_PATH}/discord-personas.json`. Re-read on every send when
+// the file's mtime changes — so admins can edit the JSON and see results on
+// the next notification without rebuilding the container.
+const DISCORD_PERSONAS_PATH = path.join(CONFIG_FOLDER_PATH, 'discord-personas.json')
+let _personaCache = { mtimeMs: 0, data: null }
+const PERSONA_FALLBACK = {
+  default: {
+    username: 'Glyphforge',
+    avatar_url: PUBLIC_BASE_URL ? `${PUBLIC_BASE_URL}/static/personas/default.png` : '',
+  },
+}
+function loadDiscordPersonas() {
+  try {
+    const st = fs.statSync(DISCORD_PERSONAS_PATH)
+    if (st.mtimeMs === _personaCache.mtimeMs && _personaCache.data) {
+      return _personaCache.data
+    }
+    const raw = fs.readFileSync(DISCORD_PERSONAS_PATH, 'utf-8')
+    const parsed = JSON.parse(raw)
+    if (parsed && typeof parsed === 'object') {
+      _personaCache = { mtimeMs: st.mtimeMs, data: parsed }
+      return parsed
+    }
+  } catch (_e) {
+    // File missing or malformed — fall through to fallback. Don't spam logs.
+  }
+  return PERSONA_FALLBACK
+}
+function getDiscordPersona(eventType) {
+  const personas = loadDiscordPersonas()
+  const fallback = personas.default || PERSONA_FALLBACK.default
+  const specific = (eventType && personas[eventType]) || {}
+  return {
+    username: specific.username || fallback.username || 'Glyphforge',
+    avatar_url: specific.avatar_url || fallback.avatar_url || '',
   }
 }
 
@@ -842,6 +900,9 @@ if (COSTUME_FOLDER_PATH) {
   app.use(`/${COSTUME_FOLDER_NAME}`, requireWhitelist, express.static(COSTUME_FOLDER_PATH, staticOptions))
 }
 app.use(`/${LORA_FOLDER_NAME}`, express.static(LORA_FOLDER_PATH, staticOptions))
+// Public static assets (persona avatars etc.) — MUST be unauthenticated so
+// Discord's CDN can fetch webhook avatar_url. Don't put sensitive files here.
+app.use('/static', express.static(STATIC_FOLDER_PATH, staticOptions))
 app.use(`/${GALLERY_FOLDER_NAME}`, requireWhitelist, express.static(GALLERY_FOLDER_PATH, galleryOptions))
 
 // API route - get all prompt data
@@ -1196,53 +1257,77 @@ app.get('/api/loras', async (req, res) => {
         modelInfo = meta.model.map(m => `${m.name} ${m.version}`).join(', ')
       }
 
-      // Extract version information from filenames
-      // Format: CharacterName(version).safetensors
-      const versions = safetensorsFiles.map(file => {
-        const match = file.match(/\(([^)]+)\)\.safetensors$/)
-        const versionName = match ? match[1] : 'default'
-
-        // Try to find corresponding model info
-        let displayName = versionName
-        if (Object.keys(modelMap).length > 0) {
-          const modelKey = versionName.toLowerCase()
-          displayName = modelMap[modelKey] || versionName
-        }
-
-        // Find images for this specific version
-        // Format: 1(version).png, 2(version).png
-        const versionImages = []
-        const allFiles = fs.readdirSync(folderPath)
-
-        // Check for numbered images with version suffix
-        for (let i = 1; i <= 10; i++) { // Check up to 10 images
-          const imageFileName = `${i}(${versionName}).png`
-          if (allFiles.includes(imageFileName)) {
-            const imagePath = path.join(folderPath, imageFileName)
+      // Build versions in meta.model order so the LoRA detail modal shows
+      // them in the configured order; orphan .safetensors files (no matching
+      // meta.model entry) go to the end. Versions configured in meta.model
+      // but without a .safetensors file on disk are still listed (filePath
+      // empty so the download button is hidden, but the version toggle and
+      // per-version images still work).
+      const allFiles = fs.readdirSync(folderPath)
+      const collectImagesFor = (versionName) => {
+        const out = []
+        const lower = (versionName || '').toLowerCase()
+        for (let i = 1; i <= 10; i++) {
+          const match = allFiles.find(f => f.toLowerCase() === `${i}(${lower}).png`)
+          if (match) {
+            const imagePath = path.join(folderPath, match)
             const mtime = fs.statSync(imagePath).mtimeMs.toString(36)
-            versionImages.push(`/${LORA_FOLDER_NAME}/character/${folder}/${imageFileName}?v=${mtime}`)
+            out.push(`/${LORA_FOLDER_NAME}/character/${folder}/${match}?v=${mtime}`)
           }
         }
-
-        // If no version-specific images found, check for generic numbered images
-        if (versionImages.length === 0) {
+        if (out.length === 0) {
           for (let i = 1; i <= 10; i++) {
             const imageFileName = `${i}.png`
             if (allFiles.includes(imageFileName)) {
               const imagePath = path.join(folderPath, imageFileName)
               const mtime = fs.statSync(imagePath).mtimeMs.toString(36)
-              versionImages.push(`/${LORA_FOLDER_NAME}/character/${folder}/${imageFileName}?v=${mtime}`)
+              out.push(`/${LORA_FOLDER_NAME}/character/${folder}/${imageFileName}?v=${mtime}`)
             }
           }
         }
+        return out
+      }
+      const findSafetensorByVersion = (versionName) => {
+        const lower = (versionName || '').toLowerCase()
+        return safetensorsFiles.find(f => {
+          const m = f.match(/\(([^)]+)\)\.safetensors$/)
+          return m && m[1].toLowerCase() === lower
+        }) || null
+      }
 
-        return {
+      const versions = []
+      const usedSafetensors = new Set()
+      if (Array.isArray(meta.model) && meta.model.length > 0) {
+        meta.model.forEach(m => {
+          if (!m || !m.name) return
+          const versionName = m.name.toLowerCase()
+          const file = findSafetensorByVersion(versionName)
+          if (file) usedSafetensors.add(file)
+          versions.push({
+            name: versionName,
+            displayName: `${m.name}${m.version ? ' ' + m.version : ''}`.trim(),
+            fileName: file || '',
+            filePath: file ? `/${LORA_FOLDER_NAME}/character/${folder}/${file}` : '',
+            images: collectImagesFor(versionName),
+          })
+        })
+      }
+      // Append any orphan .safetensors files that weren't claimed by meta.model
+      safetensorsFiles.forEach(file => {
+        if (usedSafetensors.has(file)) return
+        const match = file.match(/\(([^)]+)\)\.safetensors$/)
+        const versionName = match ? match[1] : 'default'
+        let displayName = versionName
+        if (Object.keys(modelMap).length > 0) {
+          displayName = modelMap[versionName.toLowerCase()] || versionName
+        }
+        versions.push({
           name: versionName,
-          displayName: displayName,
+          displayName,
           fileName: file,
           filePath: `/${LORA_FOLDER_NAME}/character/${folder}/${file}`,
-          images: versionImages
-        }
+          images: collectImagesFor(versionName),
+        })
       })
 
       // For backward compatibility, use first file as default
@@ -1656,48 +1741,71 @@ app.get('/api/fn-loras', requireWhitelist, async (req, res) => {
         modelInfo = meta.model.map(m => `${m.name} ${m.version}`).join(', ')
       }
 
-      // Extract version information from filenames
-      const versions = safetensorsFiles.map(file => {
-        const match = file.match(/\(([^)]+)\)\.safetensors$/)
-        const versionName = match ? match[1] : 'default'
-
-        let displayName = versionName
-        if (Object.keys(modelMap).length > 0) {
-          const modelKey = versionName.toLowerCase()
-          displayName = modelMap[modelKey] || versionName
-        }
-
-        // Find images for this specific version
-        const versionImages = []
-        const allFiles = fs.readdirSync(folderPath)
-
+      // Build versions in meta.model order (see character branch above for rationale).
+      const allFiles = fs.readdirSync(folderPath)
+      const collectImagesFor = (versionName) => {
+        const out = []
+        const lower = (versionName || '').toLowerCase()
         for (let i = 1; i <= 10; i++) {
-          const imageFileName = `${i}(${versionName}).png`
-          if (allFiles.includes(imageFileName)) {
-            const imagePath = path.join(folderPath, imageFileName)
+          const match = allFiles.find(f => f.toLowerCase() === `${i}(${lower}).png`)
+          if (match) {
+            const imagePath = path.join(folderPath, match)
             const mtime = fs.statSync(imagePath).mtimeMs.toString(36)
-            versionImages.push(`/${LORA_FOLDER_NAME}/functional/${folder}/${imageFileName}?v=${mtime}`)
+            out.push(`/${LORA_FOLDER_NAME}/functional/${folder}/${match}?v=${mtime}`)
           }
         }
-
-        if (versionImages.length === 0) {
+        if (out.length === 0) {
           for (let i = 1; i <= 10; i++) {
             const imageFileName = `${i}.png`
             if (allFiles.includes(imageFileName)) {
               const imagePath = path.join(folderPath, imageFileName)
               const mtime = fs.statSync(imagePath).mtimeMs.toString(36)
-              versionImages.push(`/${LORA_FOLDER_NAME}/functional/${folder}/${imageFileName}?v=${mtime}`)
+              out.push(`/${LORA_FOLDER_NAME}/functional/${folder}/${imageFileName}?v=${mtime}`)
             }
           }
         }
+        return out
+      }
+      const findSafetensorByVersion = (versionName) => {
+        const lower = (versionName || '').toLowerCase()
+        return safetensorsFiles.find(f => {
+          const m = f.match(/\(([^)]+)\)\.safetensors$/)
+          return m && m[1].toLowerCase() === lower
+        }) || null
+      }
 
-        return {
+      const versions = []
+      const usedSafetensors = new Set()
+      if (Array.isArray(meta.model) && meta.model.length > 0) {
+        meta.model.forEach(m => {
+          if (!m || !m.name) return
+          const versionName = m.name.toLowerCase()
+          const file = findSafetensorByVersion(versionName)
+          if (file) usedSafetensors.add(file)
+          versions.push({
+            name: versionName,
+            displayName: `${m.name}${m.version ? ' ' + m.version : ''}`.trim(),
+            fileName: file || '',
+            filePath: file ? `/${LORA_FOLDER_NAME}/functional/${folder}/${file}` : '',
+            images: collectImagesFor(versionName),
+          })
+        })
+      }
+      safetensorsFiles.forEach(file => {
+        if (usedSafetensors.has(file)) return
+        const match = file.match(/\(([^)]+)\)\.safetensors$/)
+        const versionName = match ? match[1] : 'default'
+        let displayName = versionName
+        if (Object.keys(modelMap).length > 0) {
+          displayName = modelMap[versionName.toLowerCase()] || versionName
+        }
+        versions.push({
           name: versionName,
-          displayName: displayName,
+          displayName,
           fileName: file,
           filePath: `/${LORA_FOLDER_NAME}/functional/${folder}/${file}`,
-          images: versionImages
-        }
+          images: collectImagesFor(versionName),
+        })
       })
 
       const defaultVersion = versions[0] || { name: '', displayName: '', fileName: '', filePath: '' }
