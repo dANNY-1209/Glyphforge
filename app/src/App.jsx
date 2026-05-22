@@ -128,6 +128,8 @@ function App() {
   const [pendingLoraVersionImages, setPendingLoraVersionImages] = useState({}) // { 'illustrious': [file1, file2], 'haruka': [file1, file2] }
   const [pendingLoraSafetensors, setPendingLoraSafetensors] = useState({}) // { versionName: File }
   const [editLoraSelectedVersion, setEditLoraSelectedVersion] = useState(0) // index of selected model version
+  const [openRequestsForLink, setOpenRequestsForLink] = useState([]) // pending/in_progress lora requests for "Link to request"
+  const [linkedRequestId, setLinkedRequestId] = useState('')
   const loraImageInputRef = useRef(null)
   const loraSafetensorsInputRef = useRef(null)
   const [uploadingLoraImageIndex, setUploadingLoraImageIndex] = useState(null)
@@ -1019,8 +1021,8 @@ function App() {
     setIsCreatingLora(false)
   }
 
-  const handleCreateLora = () => {
-    const defaultModel = [{ name: 'Illustrious', version: 'v2.0' }]
+  const handleCreateLora = async () => {
+    const defaultModel = [{ name: 'Illustrious', version: 'v2.0', prompt: '' }]
     setEditLoraData({
       id: null,
       editedCharacter: '',
@@ -1037,8 +1039,25 @@ function App() {
     setPendingLoraThumbnail(null)
     setPendingLoraVersionImages({})
     setEditLoraSelectedVersion(0)
+    setLinkedRequestId('')
     setIsEditingLora(true)
     setIsCreatingLora(true)
+    // Best-effort fetch of open lora requests for the link dropdown.
+    // Silent failure leaves the dropdown empty — admin can still create
+    // the LoRA without linking.
+    try {
+      const response = await fetch('/api/requests')
+      if (response.ok) {
+        const data = await response.json()
+        const open = (Array.isArray(data) ? data : [])
+          .filter((r) => r && r.type === 'lora' && (r.status === 'pending' || r.status === 'in_progress'))
+        setOpenRequestsForLink(open)
+      } else {
+        setOpenRequestsForLink([])
+      }
+    } catch (_e) {
+      setOpenRequestsForLink([])
+    }
   }
 
   const handleCloseEditLora = () => {
@@ -1050,6 +1069,8 @@ function App() {
     setPendingLoraSafetensors({})
     setEditLoraSelectedVersion(0)
     setEditNote('')
+    setLinkedRequestId('')
+    setOpenRequestsForLink([])
   }
 
   const handleUpdateLora = async () => {
@@ -1097,7 +1118,8 @@ function App() {
             characterCount: parseInt(editLoraData.editedCharacterCount) || 1,
             model: modelData,
             link: editLoraData.editedLink,
-            prompt: editLoraData.editedPrompt
+            prompt: editLoraData.editedPrompt,
+            ...(linkedRequestId ? { linkedRequestId } : {}),
           })
         })
         const data = await response.json()
@@ -4406,6 +4428,35 @@ function App() {
                 />
               </div>
             </div>
+
+            {/* Link to open request (create-only) */}
+            {isCreatingLora && openRequestsForLink.length > 0 && (
+              <div className="edit-field full-width">
+                <label>
+                  Link to request (optional)
+                  <span style={{ color: 'var(--text-secondary)', fontWeight: 'normal', marginLeft: '0.5rem', fontSize: '0.8rem' }}>
+                    完成後會自動標記為 completed 並在通知 @ 委託者
+                  </span>
+                  :
+                </label>
+                <select
+                  value={linkedRequestId}
+                  onChange={(e) => setLinkedRequestId(e.target.value)}
+                  style={{ width: '100%' }}
+                >
+                  <option value="">— 不連結 —</option>
+                  {openRequestsForLink.map((r) => {
+                    const who = r.submittedBy?.globalName || r.submittedBy?.username || `User ${String(r.submittedBy?.discordId || '').slice(-4)}`
+                    const status = r.status === 'in_progress' ? '🔧' : '⏳'
+                    return (
+                      <option key={r.id} value={r.id}>
+                        {status} {r.characterName || '(no name)'} — {r.outfit || '(no outfit)'} — {who}
+                      </option>
+                    )
+                  })}
+                </select>
+              </div>
+            )}
 
             {/* Prompt (per-version) */}
             <div className="edit-field full-width">

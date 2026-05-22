@@ -367,6 +367,7 @@ const FIELD_LABELS = {
   note:             'Note',
   status:           'Status',
   rejectReason:     'Reject Reason',
+  thumbnail:        'Thumbnail',
 }
 
 function humanizeField(name) {
@@ -540,11 +541,25 @@ function buildDiscordEmbed(eventType, data) {
   if (embed_image_url) embed.thumbnail = { url: embed_image_url }
 
   const persona = getDiscordPersona(eventType)
-  return {
+  const result = {
     username: persona.username,
     avatar_url: persona.avatar_url,
     embeds: [embed],
   }
+  // Optional @mention via top-level `content`. Only top-level content pings
+  // users on Discord — mentions inside embed bodies are display-only and
+  // never produce a notification. Used by new_lora when fulfilling a
+  // request: `<@id> 你委託的 ... LoRA 完成囉！`. `allowed_mentions` is
+  // scoped to just the mentioned user so we can't accidentally @everyone.
+  if (data.mentionContent && typeof data.mentionContent === 'string') {
+    result.content = data.mentionContent.slice(0, 1800)
+    if (data.mentionDiscordId) {
+      result.allowed_mentions = { users: [String(data.mentionDiscordId)] }
+    } else {
+      result.allowed_mentions = { parse: [] }
+    }
+  }
+  return result
 }
 
 // ─── Discord persona config (admin-editable JSON) ───────────────────────────
@@ -2280,7 +2295,7 @@ const loraSafetensorsUpload = multer({
 // Create new LoRA
 app.post('/api/loras', authMiddleware, (req, res) => {
   try {
-    const { character, cloth, company, group, gender, characterCount, model, link, prompt } = req.body
+    const { character, cloth, company, group, gender, characterCount, model, link, prompt, linkedRequestId } = req.body
     
     if (!character) {
       return res.status(400).json({ error: 'Character name is required' })
@@ -2292,6 +2307,26 @@ app.post('/api/loras', authMiddleware, (req, res) => {
 
     if (fs.existsSync(loraPath)) {
       return res.status(400).json({ error: 'LoRA with this name already exists' })
+    }
+
+    // If a linked request was provided, validate it exists and snapshot
+    // submittedBy. The request itself isn't marked completed until the
+    // thumbnail upload (where new_lora actually fires).
+    let linkedSubmittedBy = null
+    let validLinkedRequestId = ''
+    if (linkedRequestId && typeof linkedRequestId === 'string' && isSafeSlug(linkedRequestId)) {
+      const reqMetaPath = path.join(REQUEST_FOLDER_PATH, linkedRequestId, 'meta.json')
+      if (fs.existsSync(reqMetaPath)) {
+        try {
+          const reqMeta = JSON.parse(fs.readFileSync(reqMetaPath, 'utf-8'))
+          if (reqMeta && reqMeta.submittedBy && reqMeta.submittedBy.discordId) {
+            linkedSubmittedBy = reqMeta.submittedBy
+          }
+          validLinkedRequestId = linkedRequestId
+        } catch (_e) {
+          // ignore — link silently dropped
+        }
+      }
     }
 
     // Find the next available serial number
@@ -2331,7 +2366,9 @@ app.post('/api/loras', authMiddleware, (req, res) => {
       prompt: prompt || '',
       'serial-number': nextSerialNumber,
       downloadCount: 0,
-      copyCount: 0
+      copyCount: 0,
+      ...(validLinkedRequestId ? { linkedRequestId: validLinkedRequestId } : {}),
+      ...(linkedSubmittedBy ? { submittedBy: linkedSubmittedBy } : {}),
     }
 
     writeJsonAtomic(path.join(loraPath, 'meta.json'), meta)
@@ -2465,9 +2502,64 @@ app.post('/api/loras/:id/image/:imageIndex', authMiddleware, loraImageUpload.sin
             const thumbnailUrl = PUBLIC_BASE_URL
               ? `${PUBLIC_BASE_URL}/${LORA_FOLDER_NAME}/character/${id}/0.png?v=${mtime}`
               : ''
-            sendDiscordNotification('new_lora', { ...meta, id, thumbnailUrl })
+
+            // If this LoRA was created against a linked request, mark that
+            // request completed BEFORE firing the webhook, so the embed
+            // shows the up-to-date state and we can @mention the submitter.
+            let mentionDiscordId = ''
+            let mentionContent = ''
+            if (meta.linkedRequestId) {
+              try {
+                const reqMetaPath = path.join(REQUEST_FOLDER_PATH, meta.linkedRequestId, 'meta.json')
+                if (fs.existsSync(reqMetaPath)) {
+                  const reqMeta = JSON.parse(fs.readFileSync(reqMetaPath, 'utf-8'))
+                  if (reqMeta && reqMeta.status !== 'completed') {
+                    reqMeta.status = 'completed'
+                    reqMeta.updatedAt = new Date().toISOString()
+                    writeJsonAtomic(reqMetaPath, reqMeta)
+                  }
+                  if (reqMeta && reqMeta.submittedBy && reqMeta.submittedBy.discordId) {
+                    mentionDiscordId = String(reqMeta.submittedBy.discordId)
+                  }
+                }
+              } catch (linkErr) {
+                console.error('[linked-request] failed to mark completed:', linkErr.message)
+              }
+            }
+            // Fallback: use submittedBy snapshot stored on the LoRA itself
+            // (set at LoRA create time even if the request file was later
+            // moved or deleted).
+            if (!mentionDiscordId && meta.submittedBy && meta.submittedBy.discordId) {
+              mentionDiscordId = String(meta.submittedBy.discordId)
+            }
+            if (mentionDiscordId) {
+              const outfit = meta.cloth ? ` ${meta.cloth}` : ''
+              mentionContent = `<@${mentionDiscordId}> 你委託的 ${meta.character || ''}${outfit} LoRA 完成囉！`
+            }
+
+            sendDiscordNotification('new_lora', {
+              ...meta,
+              id,
+              thumbnailUrl,
+              ...(mentionContent ? { mentionContent, mentionDiscordId } : {}),
+            })
             meta.discordNotified = true
             writeJsonAtomic(metaPath, meta)
+          } else {
+            // Subsequent thumbnail replacements — emit a quiet edit notification
+            // (changedFields includes a synthetic 'thumbnail' marker so the
+            // webhook hint isn't blank).
+            const mtime = Date.now()
+            const thumbnailUrl = PUBLIC_BASE_URL
+              ? `${PUBLIC_BASE_URL}/${LORA_FOLDER_NAME}/character/${id}/0.png?v=${mtime}`
+              : ''
+            sendDiscordNotification('edit_lora', {
+              ...meta,
+              id,
+              changedFields: ['thumbnail'],
+              editNote: '',
+              thumbnailUrl,
+            })
           }
         }
       } catch (notifyErr) {
