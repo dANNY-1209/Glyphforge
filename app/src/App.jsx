@@ -997,7 +997,7 @@ function App() {
     // Use modelRaw (original array from meta.json) if available
     const modelArray = Array.isArray(lora.modelRaw) && lora.modelRaw.length > 0 
       ? lora.modelRaw 
-      : (lora.versions?.map(v => ({ name: v.name, version: '' })) || [])
+      : (lora.versions?.map(v => ({ name: v.name, version: '', prompt: v.prompt || lora.prompt || '' })) || [])
     
     setEditLoraData({
       ...lora,
@@ -1251,7 +1251,7 @@ function App() {
   const handleEditFnLora = (fnLora) => {
     const modelArray = Array.isArray(fnLora.modelRaw) && fnLora.modelRaw.length > 0 
       ? fnLora.modelRaw 
-      : (fnLora.versions?.map(v => ({ name: v.name, version: '' })) || [])
+      : (fnLora.versions?.map(v => ({ name: v.name, version: '', prompt: v.prompt || fnLora.prompt || '' })) || [])
     
     setEditFnLoraData({
       ...fnLora,
@@ -4407,14 +4407,34 @@ function App() {
               </div>
             </div>
 
-            {/* Prompt */}
+            {/* Prompt (per-version) */}
             <div className="edit-field full-width">
-              <label>Prompt:</label>
+              <label>
+                Prompt
+                {editLoraData.editedModel && editLoraData.editedModel[editLoraSelectedVersion]?.name && (
+                  <span style={{ color: 'var(--text-secondary)', fontWeight: 'normal', marginLeft: '0.5rem' }}>
+                    for: {editLoraData.editedModel[editLoraSelectedVersion].name}
+                    {editLoraData.editedModel[editLoraSelectedVersion].version
+                      ? ` ${editLoraData.editedModel[editLoraSelectedVersion].version}` : ''}
+                  </span>
+                )}
+                :
+              </label>
               <textarea
-                value={editLoraData.editedPrompt}
-                onChange={(e) => setEditLoraData(prev => ({ ...prev, editedPrompt: e.target.value }))}
+                value={editLoraData.editedModel?.[editLoraSelectedVersion]?.prompt ?? editLoraData.editedPrompt ?? ''}
+                onChange={(e) => setEditLoraData(prev => {
+                  const newModel = Array.isArray(prev.editedModel) ? prev.editedModel.map((m, i) => (
+                    i === editLoraSelectedVersion ? { ...m, prompt: e.target.value } : m
+                  )) : prev.editedModel
+                  return {
+                    ...prev,
+                    editedModel: newModel,
+                    editedModelJson: Array.isArray(newModel) ? JSON.stringify(newModel, null, 2) : prev.editedModelJson,
+                    editedPrompt: e.target.value,
+                  }
+                })}
                 rows={4}
-                placeholder="LoRA trigger prompt..."
+                placeholder="LoRA trigger prompt for this base model..."
               />
             </div>
 
@@ -4826,14 +4846,34 @@ function App() {
               </div>
             </div>
 
-            {/* Prompt */}
+            {/* Prompt (per-version) */}
             <div className="edit-field full-width">
-              <label>Prompt:</label>
+              <label>
+                Prompt
+                {editFnLoraData.editedModel && editFnLoraData.editedModel[editFnLoraSelectedVersion]?.name && (
+                  <span style={{ color: 'var(--text-secondary)', fontWeight: 'normal', marginLeft: '0.5rem' }}>
+                    for: {editFnLoraData.editedModel[editFnLoraSelectedVersion].name}
+                    {editFnLoraData.editedModel[editFnLoraSelectedVersion].version
+                      ? ` ${editFnLoraData.editedModel[editFnLoraSelectedVersion].version}` : ''}
+                  </span>
+                )}
+                :
+              </label>
               <textarea
-                value={editFnLoraData.editedPrompt}
-                onChange={(e) => setEditFnLoraData(prev => ({ ...prev, editedPrompt: e.target.value }))}
+                value={editFnLoraData.editedModel?.[editFnLoraSelectedVersion]?.prompt ?? editFnLoraData.editedPrompt ?? ''}
+                onChange={(e) => setEditFnLoraData(prev => {
+                  const newModel = Array.isArray(prev.editedModel) ? prev.editedModel.map((m, i) => (
+                    i === editFnLoraSelectedVersion ? { ...m, prompt: e.target.value } : m
+                  )) : prev.editedModel
+                  return {
+                    ...prev,
+                    editedModel: newModel,
+                    editedModelJson: Array.isArray(newModel) ? JSON.stringify(newModel, null, 2) : prev.editedModelJson,
+                    editedPrompt: e.target.value,
+                  }
+                })}
                 rows={4}
-                placeholder="Fn LoRA trigger prompt..."
+                placeholder="Fn LoRA trigger prompt for this base model..."
               />
             </div>
 
@@ -5021,10 +5061,10 @@ function App() {
                   </svg>
                 </button>
               )}
-              {selectedLora.prompt && (
+              {(selectedLoraVersion?.prompt || selectedLora.prompt) && (
                 <button
                   className="lora-action-button"
-                  onClick={() => handleCopyPrompt(selectedLora.prompt, selectedLora.id, 'lora')}
+                  onClick={() => handleCopyPrompt(selectedLoraVersion?.prompt || selectedLora.prompt, selectedLora.id, 'lora')}
                   title="Copy prompt"
                 >
                   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -5144,11 +5184,12 @@ function App() {
                   </svg>
                 </button>
               )}
-              {selectedFnLora.prompt && (
+              {(selectedFnLora.versions?.[selectedFnLoraVersion]?.prompt || selectedFnLora.prompt) && (
                 <button
                   className="lora-action-button"
                   onClick={async () => {
-                    navigator.clipboard.writeText(selectedFnLora.prompt)
+                    const versionPrompt = selectedFnLora.versions?.[selectedFnLoraVersion]?.prompt || selectedFnLora.prompt
+                    navigator.clipboard.writeText(versionPrompt)
                     // Update copy count
                     await fetch(`/api/fn-loras/${selectedFnLora.id}/copy`, { method: 'POST' })
                   }}

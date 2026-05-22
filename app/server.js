@@ -1309,6 +1309,7 @@ app.get('/api/loras', async (req, res) => {
             fileName: file || '',
             filePath: file ? `/${LORA_FOLDER_NAME}/character/${folder}/${file}` : '',
             images: collectImagesFor(versionName),
+            prompt: typeof m.prompt === 'string' ? m.prompt : (meta.prompt || ''),
           })
         })
       }
@@ -1327,6 +1328,7 @@ app.get('/api/loras', async (req, res) => {
           fileName: file,
           filePath: `/${LORA_FOLDER_NAME}/character/${folder}/${file}`,
           images: collectImagesFor(versionName),
+          prompt: meta.prompt || '',
         })
       })
 
@@ -1788,6 +1790,7 @@ app.get('/api/fn-loras', requireWhitelist, async (req, res) => {
             fileName: file || '',
             filePath: file ? `/${LORA_FOLDER_NAME}/functional/${folder}/${file}` : '',
             images: collectImagesFor(versionName),
+            prompt: typeof m.prompt === 'string' ? m.prompt : (meta.prompt || ''),
           })
         })
       }
@@ -1805,6 +1808,7 @@ app.get('/api/fn-loras', requireWhitelist, async (req, res) => {
           fileName: file,
           filePath: `/${LORA_FOLDER_NAME}/functional/${folder}/${file}`,
           images: collectImagesFor(versionName),
+          prompt: meta.prompt || '',
         })
       })
 
