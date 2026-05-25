@@ -6,6 +6,16 @@
         "hash": "887c207",
         "type": "security",
         "message": "Hardened workflow file-handling routes against unsafe paths"
+      },
+      {
+        "hash": "bf9a695",
+        "type": "feat",
+        "message": "Admins now see who submitted each Request directly on every card"
+      },
+      {
+        "hash": "f1a6d5f",
+        "type": "fix",
+        "message": "Admins can now see the Discord submitter inside each request's detail view"
       }
     ]
   },

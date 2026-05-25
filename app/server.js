@@ -3867,24 +3867,11 @@ app.get('/api/requests', requireWhitelist, (req, res) => {
   try {
     ensureRequestDir()
 
-    // Check if request is from admin or Discord user
-    let isAdmin = false
-    let discordUserId = null
-    const authHeader = req.headers.authorization
-    if (authHeader && authHeader.startsWith('Bearer ')) {
-      const token = authHeader.split(' ')[1]
-      try {
-        const decoded = jwt.verify(token, process.env.JWT_SECRET)
-        if (decoded.role === 'admin') {
-          isAdmin = true
-        } else if (decoded.discordId) {
-          // Discord user
-          discordUserId = decoded.discordId
-        }
-      } catch (error) {
-        // Invalid token
-      }
-    }
+    // submittedBy visibility — derived from cookie-auth (req.auth populated
+    // by attachAuth middleware). The legacy Bearer-token `role: 'admin'`
+    // check is gone: admin status now lives in authStore flags, not the JWT.
+    const isAdmin = !!(req.auth && req.auth.isAdmin)
+    const discordUserId = req.auth && req.auth.user ? req.auth.user.discordId : null
 
     const folders = fs.readdirSync(REQUEST_FOLDER_PATH).filter(file => {
       const fullPath = path.join(REQUEST_FOLDER_PATH, file)
