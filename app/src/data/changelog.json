@@ -1,5 +1,15 @@
 [
   {
+    "date": "2026-05-25",
+    "changes": [
+      {
+        "hash": "887c207",
+        "type": "security",
+        "message": "Hardened workflow file-handling routes against unsafe paths"
+      }
+    ]
+  },
+  {
     "date": "2026-05-23",
     "changes": [
       {

@@ -154,6 +154,26 @@ function requireSlug(name, value, res) {
   return true
 }
 
+// Looser validator for user-facing filenames (uploaded files keep their
+// original name, which may contain spaces, parentheses, unicode chars, etc).
+// We still defend against path traversal here; safeResolveUnder is the final
+// guard at the path-join site.
+function isSafeFilename(s) {
+  if (typeof s !== 'string' || !s.length || s.length > 255) return false
+  if (s === '.' || s === '..') return false
+  if (s.includes('/') || s.includes('\\') || s.includes('\0')) return false
+  // eslint-disable-next-line no-control-regex
+  if (/[\x00-\x1f]/.test(s)) return false
+  return true
+}
+function requireFilename(name, value, res) {
+  if (!isSafeFilename(value)) {
+    res.status(400).json({ error: `Invalid ${name}` })
+    return false
+  }
+  return true
+}
+
 // Resolve `child` under `base` and ensure the resolved path actually stays
 // inside `base`. Defends against ../, absolute overrides, symlinks, mixed
 // separators, and unicode path tricks. Returns null if the path escapes.
@@ -4523,9 +4543,13 @@ app.post('/api/workflows/:id/upload', authMiddleware, workflowUpload.single('fil
 app.delete('/api/workflows/:id/file/:filename', authMiddleware, (req, res) => {
   try {
     const { id, filename } = req.params
-    const workflowPath = path.join(WORKFLOW_FOLDER_PATH, id)
-    const metaPath = path.join(workflowPath, 'meta.json')
-    const filePath = path.join(workflowPath, 'files', filename)
+    if (!requireSlug('id', id, res)) return
+    if (!requireFilename('filename', filename, res)) return
+    const workflowPath = safeResolveUnder(WORKFLOW_FOLDER_PATH, id)
+    if (!workflowPath) return res.status(400).json({ error: 'Invalid path' })
+    const metaPath = safeResolveUnder(workflowPath, 'meta.json')
+    const filePath = safeResolveUnder(workflowPath, 'files', filename)
+    if (!metaPath || !filePath) return res.status(400).json({ error: 'Invalid path' })
 
     if (!fs.existsSync(filePath)) {
       return res.status(404).json({ error: 'File not found' })
@@ -4558,7 +4582,7 @@ app.get('/api/workflows/:id/download/:filename', requireWhitelist, (req, res) =>
   try {
     const { id, filename } = req.params
     if (!requireSlug('id', id, res)) return
-    if (!requireSlug('filename', filename, res)) return
+    if (!requireFilename('filename', filename, res)) return
 
     const filePath = safeResolveUnder(WORKFLOW_FOLDER_PATH, id, 'files', filename)
     if (!filePath) {
