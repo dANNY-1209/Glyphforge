@@ -78,14 +78,16 @@ export function findSafetensors(loraDir, arch) {
   return null
 }
 
-/** Find thumbnail: prefer `0(<tag>).png` (per-arch thumbnail uploaded via the
- *  Edit modal's Thumbnail tile under each version tab), then `1(<tag>).png`
- *  (first preview, legacy fallback), then `0.png` (shared/primary thumbnail). */
+/** Find thumbnail. Per-arch (`0(<tag>).png`) wins; otherwise fall back to the
+ *  shared primary 0.png. We intentionally DO NOT fall back to `1(<tag>).png`
+ *  — those are full-body preview shots, not square thumbnails, and using
+ *  them as the LoRA card image looks awful on MizuCanvas (the image gets
+ *  stretched/cropped weirdly). The primary 0.png is always square (sharp
+ *  256x256), and is a safe fallback for any arch without its own thumb. */
 export function findThumbnail(loraDir, arch) {
   const tag = archTag(arch)
   const candidates = [
     `0(${tag}).png`, `0(${tag}).jpg`,
-    `1(${tag}).png`, `1(${tag}).jpg`,
     `0.png`, `0.jpg`,
   ]
   for (const c of candidates) {

@@ -1,5 +1,15 @@
 [
   {
+    "date": "2026-05-27",
+    "changes": [
+      {
+        "hash": "ea4b825",
+        "type": "fix",
+        "message": "MizuCanvas sync no longer falls back to the per-arch preview image when no per-arch thumbnail exists; uses the shared primary thumbnail instead"
+      }
+    ]
+  },
+  {
     "date": "2026-05-26",
     "changes": [
       {
