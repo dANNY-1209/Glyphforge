@@ -12,6 +12,7 @@ import sharp from 'sharp'
 import http from 'http'
 import rateLimit from 'express-rate-limit'
 import { createAuthStore } from './auth-store.js'
+import * as mizuSync from './lib/mizucanvasSync.js'
 
 dotenv.config()
 
@@ -336,6 +337,8 @@ const DISCORD_EVENT_STYLES = {
   edit_costume:  { color: 0xb37726, emoji: '✏️', label: 'Costume' },
   edit_workflow: { color: 0x269173, emoji: '✏️', label: 'Workflow' },
   edit_request:  { color: 0xb38f00, emoji: '✏️', label: 'Request' },
+  // MizuCanvas cross-app sync
+  mizu_sync_failed: { color: 0xcc4444, emoji: '⚠️', label: 'MizuCanvas Sync Failed' },
   // Whitelist + admin lifecycle events
   whitelist_request:    { color: 0xffcc66, emoji: '🙋', label: 'Whitelist Request' },
   whitelist_approve:    { color: 0x33cc66, emoji: '✅', label: 'Whitelist Approved' },
@@ -547,6 +550,13 @@ function buildDiscordEmbed(eventType, data) {
   } else if (eventType === 'test') {
     title = `${style.emoji} Glyphforge webhook test`
     description = 'If you see this, Discord notifications are wired up.'
+  } else if (eventType === 'mizu_sync_failed') {
+    title = `${style.emoji} MizuCanvas 同步失敗: ${data.label || data.loraId || ''}`
+    if (data.failures) {
+      const trimmed = String(data.failures).slice(0, 800)
+      description = `\`\`\`\n${trimmed}\n\`\`\``
+    }
+    if (data.loraId) fields.push({ name: 'LoRA', value: String(data.loraId), inline: true })
   }
 
   const embed = {
@@ -2614,6 +2624,27 @@ app.post('/api/loras/:id/safetensors', authMiddleware, loraSafetensorsUpload.sin
     }
 
     console.log('Character LoRA safetensors uploaded:', req.file.originalname, 'to', loraPath)
+
+    // Fire-and-forget MizuCanvas auto-sync. Only triggers if env enabled. We
+    // wait until safetensors is on disk (now) — both initial create and version
+    // updates land here. Reading meta + dispatching is async; we don't await.
+    if (mizuSync.isEnabled()) {
+      void (async () => {
+        try {
+          const metaPath = path.join(loraPath, 'meta.json')
+          if (!fs.existsSync(metaPath)) return
+          const meta = JSON.parse(fs.readFileSync(metaPath, 'utf-8'))
+          await mizuSync.syncCharacterLora({
+            loraId: id,
+            loraDir: loraPath,
+            meta,
+            notifyDiscord: sendDiscordNotification,
+          })
+        } catch (e) {
+          console.error(`[mizu-sync] dispatch failed for ${id}:`, e.message)
+        }
+      })()
+    }
 
     res.json({ 
       success: true, 

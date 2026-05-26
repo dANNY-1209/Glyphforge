@@ -21,7 +21,7 @@ export default [
 
   // Node-side files (Express server, build configs).
   {
-    files: ['server.js', 'auth-store.js', 'vite.config.js', 'eslint.config.js'],
+    files: ['server.js', 'auth-store.js', 'vite.config.js', 'eslint.config.js', 'lib/**/*.js', 'scripts/**/*.js'],
     languageOptions: {
       ecmaVersion: 2023,
       sourceType: 'module',

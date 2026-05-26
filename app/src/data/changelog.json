@@ -1,5 +1,15 @@
 [
   {
+    "date": "2026-05-26",
+    "changes": [
+      {
+        "hash": "126d83b",
+        "type": "feat",
+        "message": "上傳/更新 character LoRA 時可選擇同步推到 MizuCanvas 給其他使用者用"
+      }
+    ]
+  },
+  {
     "date": "2026-05-25",
     "changes": [
       {
