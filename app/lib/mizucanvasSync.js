@@ -78,10 +78,16 @@ export function findSafetensors(loraDir, arch) {
   return null
 }
 
-/** Find thumbnail: prefer `1(<tag>).png`, fall back to `0.png`. */
+/** Find thumbnail: prefer `0(<tag>).png` (per-arch thumbnail uploaded via the
+ *  Edit modal's Thumbnail tile under each version tab), then `1(<tag>).png`
+ *  (first preview, legacy fallback), then `0.png` (shared/primary thumbnail). */
 export function findThumbnail(loraDir, arch) {
   const tag = archTag(arch)
-  const candidates = [`1(${tag}).png`, `1(${tag}).jpg`, `0.png`, `0.jpg`]
+  const candidates = [
+    `0(${tag}).png`, `0(${tag}).jpg`,
+    `1(${tag}).png`, `1(${tag}).jpg`,
+    `0.png`, `0.jpg`,
+  ]
   for (const c of candidates) {
     const p = path.join(loraDir, c)
     if (fs.existsSync(p)) return p

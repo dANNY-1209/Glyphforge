@@ -1339,6 +1339,17 @@ app.get('/api/loras', async (req, res) => {
           return m && m[1].toLowerCase() === lower
         }) || null
       }
+      // Per-arch thumbnail file (0(<version>).png). Optional; falls back to
+      // the shared 0.png when uploading to sync targets that want one
+      // thumbnail per architecture (e.g. MizuCanvas).
+      const findVersionThumbnail = (versionName) => {
+        const lower = (versionName || '').toLowerCase()
+        const match = allFiles.find(f => f.toLowerCase() === `0(${lower}).png`)
+        if (!match) return ''
+        const p = path.join(folderPath, match)
+        const mtime = fs.statSync(p).mtimeMs.toString(36)
+        return `/${LORA_FOLDER_NAME}/character/${folder}/${match}?v=${mtime}`
+      }
 
       const versions = []
       const usedSafetensors = new Set()
@@ -1354,6 +1365,7 @@ app.get('/api/loras', async (req, res) => {
             fileName: file || '',
             filePath: file ? `/${LORA_FOLDER_NAME}/character/${folder}/${file}` : '',
             images: collectImagesFor(versionName),
+            thumbnail: findVersionThumbnail(versionName),
             prompt: typeof m.prompt === 'string' ? m.prompt : (meta.prompt || ''),
           })
         })
@@ -1373,6 +1385,7 @@ app.get('/api/loras', async (req, res) => {
           fileName: file,
           filePath: `/${LORA_FOLDER_NAME}/character/${folder}/${file}`,
           images: collectImagesFor(versionName),
+          thumbnail: findVersionThumbnail(versionName),
           prompt: meta.prompt || '',
         })
       })
@@ -2264,13 +2277,15 @@ const loraImageStorage = multer.diskStorage({
   filename: (req, file, cb) => {
     const imageIndex = req.params.imageIndex || '0'
     if (!/^\d{1,3}$/.test(String(imageIndex))) return cb(new Error('Invalid imageIndex'))
-    // For images 1 and 2, include version suffix if provided
+    // version suffix is supported for ALL image indices (0, 1, 2, ...).
+    //   imageIndex=0 + no version  -> 0.png  (shared/primary thumbnail, used by Glyphforge UI)
+    //   imageIndex=0 + version=v   -> 0(v).png (per-arch thumbnail, only consumed by external syncs)
+    //   imageIndex>=1 + version=v  -> N(v).png (per-arch preview, existing behaviour)
+    //   imageIndex>=1 + no version -> N.png
     // Support both query param and body (query takes precedence, body requires correct FormData order)
     const version = req.query.version || req.body.version || ''
     if (version && !isSafeSlug(version)) return cb(new Error('Invalid version'))
-    if (imageIndex === '0') {
-      cb(null, '0.png')
-    } else if (version) {
+    if (version) {
       cb(null, `${imageIndex}(${version}).png`)
     } else {
       cb(null, `${imageIndex}.png`)
@@ -2509,21 +2524,31 @@ app.post('/api/loras/:id/image/:imageIndex', authMiddleware, loraImageUpload.sin
       return res.status(400).json({ error: 'No image uploaded' })
     }
 
-    // If it's the thumbnail (0), resize to square
+    // version mirrors the multer storage handler (query takes precedence over body).
+    // It controls per-arch filenames like 0(illustrious).png / 1(anima).png and is
+    // ALSO used below to skip Discord notifications for per-arch thumbnails — only
+    // the primary 0.png (no version) drives the new_lora / edit_lora webhook so we
+    // don't spam the channel with N events per upload.
+    const version = req.query.version || req.body.version || ''
+
+    // If it's a thumbnail (index 0), resize to square. Applies to both the
+    // primary 0.png and per-arch 0(<version>).png variants.
     if (imageIndex === '0') {
       const tempPath = req.file.path + '_temp'
       fs.renameSync(req.file.path, tempPath)
-      
+
       await sharp(tempPath)
         .resize(256, 256, { fit: 'cover' })
         .png()
         .toFile(req.file.path)
-      
+
       fs.unlinkSync(tempPath)
 
       // Fire the deferred new_lora Discord notification on FIRST thumbnail
       // upload only. Subsequent thumbnail edits don't re-notify.
-      try {
+      // ONLY the primary 0.png (no version suffix) drives notifications; per-arch
+      // 0(<version>).png variants are silent — they're a sync-only artefact.
+      if (!version) try {
         const metaPath = path.join(loraPath, 'meta.json')
         if (fs.existsSync(metaPath)) {
           const meta = JSON.parse(fs.readFileSync(metaPath, 'utf-8'))

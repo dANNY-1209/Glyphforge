@@ -6,6 +6,16 @@
         "hash": "126d83b",
         "type": "feat",
         "message": "上傳/更新 character LoRA 時可選擇同步推到 MizuCanvas 給其他使用者用"
+      },
+      {
+        "hash": "6d3071c",
+        "type": "feat",
+        "message": "Edit modal now supports per-model-architecture thumbnails (optional; falls back to the shared image)"
+      },
+      {
+        "hash": "acbdf69",
+        "type": "feat",
+        "message": "Edit modal now supports per-model-architecture thumbnails — switching the model tab updates the same square thumbnail tile (first tab also acts as the primary)"
       }
     ]
   },

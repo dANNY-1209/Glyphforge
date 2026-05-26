@@ -124,7 +124,8 @@ function App() {
   const [isEditingLora, setIsEditingLora] = useState(false)
   const [isCreatingLora, setIsCreatingLora] = useState(false)
   const [editLoraData, setEditLoraData] = useState(null)
-  const [pendingLoraThumbnail, setPendingLoraThumbnail] = useState(null) // 0.png (shared)
+  const [pendingLoraThumbnail, setPendingLoraThumbnail] = useState(null) // 0.png (shared/primary; what Glyphforge UI displays)
+  const [pendingLoraVersionThumbnails, setPendingLoraVersionThumbnails] = useState({}) // { 'illustrious': File, 'anima': File } — per-arch 0(<v>).png
   const [pendingLoraVersionImages, setPendingLoraVersionImages] = useState({}) // { 'illustrious': [file1, file2], 'haruka': [file1, file2] }
   const [pendingLoraSafetensors, setPendingLoraSafetensors] = useState({}) // { versionName: File }
   const [editLoraSelectedVersion, setEditLoraSelectedVersion] = useState(0) // index of selected model version
@@ -1016,6 +1017,7 @@ function App() {
     })
     setPendingLoraThumbnail(null)
     setPendingLoraVersionImages({})
+    setPendingLoraVersionThumbnails({})
     setEditLoraSelectedVersion(0)
     setIsEditingLora(true)
     setIsCreatingLora(false)
@@ -1038,6 +1040,7 @@ function App() {
     })
     setPendingLoraThumbnail(null)
     setPendingLoraVersionImages({})
+    setPendingLoraVersionThumbnails({})
     setEditLoraSelectedVersion(0)
     setLinkedRequestId('')
     setIsEditingLora(true)
@@ -1066,6 +1069,7 @@ function App() {
     setEditLoraData(null)
     setPendingLoraThumbnail(null)
     setPendingLoraVersionImages({})
+    setPendingLoraVersionThumbnails({})
     setPendingLoraSafetensors({})
     setEditLoraSelectedVersion(0)
     setEditNote('')
@@ -1146,10 +1150,26 @@ function App() {
         if (!response.ok) throw new Error('Failed to update LoRA')
       }
 
-      // Upload thumbnail (0.png) - shared across versions
+      // Upload thumbnail (0.png) — primary/shared, used by Glyphforge UI list display
       if (pendingLoraThumbnail) {
         const formData = new FormData()
         formData.append('image', pendingLoraThumbnail)
+        await fetch(`/api/loras/${loraId}/image/0`, {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${token}` },
+          body: formData
+        })
+      }
+
+      // Upload per-version thumbnails (0(<version>).png) — optional, used by
+      // external syncs (e.g. MizuCanvas) that want a distinct thumbnail per
+      // architecture. NOT shown in Glyphforge UI list.
+      for (const [versionName, file] of Object.entries(pendingLoraVersionThumbnails)) {
+        if (!file) continue
+        const formData = new FormData()
+        // IMPORTANT: version must be appended BEFORE image for multer to read it in filename callback
+        formData.append('version', versionName.toLowerCase())
+        formData.append('image', file)
         await fetch(`/api/loras/${loraId}/image/0`, {
           method: 'POST',
           headers: { 'Authorization': `Bearer ${token}` },
@@ -1536,7 +1556,7 @@ function App() {
 
   const handleLoraImageSelect = (index, file) => {
     if (index === 0) {
-      // Thumbnail (shared)
+      // Thumbnail (shared/primary 0.png)
       setPendingLoraThumbnail(file)
     } else {
       // Version-specific image (1 or 2)
@@ -1551,6 +1571,15 @@ function App() {
         })
       }
     }
+  }
+
+  // Per-version thumbnail (0(<version>).png) for the currently-selected model tab.
+  // Optional; only used by external syncs that want a thumbnail per architecture.
+  const handleLoraVersionThumbnailSelect = (file) => {
+    const currentModel = editLoraData?.editedModel?.[editLoraSelectedVersion]
+    if (!currentModel) return
+    const versionName = currentModel.name.toLowerCase()
+    setPendingLoraVersionThumbnails(prev => ({ ...prev, [versionName]: file }))
   }
 
   const handleCostumeAdminClick = () => {
@@ -4203,34 +4232,70 @@ function App() {
               {isCreatingLora ? '✨ Create New LoRA' : `✏️ Edit: ${editLoraData.character || 'LoRA'}`}
             </h3>
 
-            {/* Thumbnail Upload (Shared) */}
-            <div className="edit-images">
-              <label style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '0.5rem', display: 'block' }}>
-                📷 Thumbnail (shared across all versions):
-              </label>
-              <div
-                className={`edit-image-placeholder ${pendingLoraThumbnail || (!isCreatingLora && editLoraData.thumbnail) ? 'has-image' : ''}`}
-                onClick={() => {
-                  setUploadingLoraImageIndex(0)
-                  loraImageInputRef.current?.click()
-                }}
-                style={{ aspectRatio: '1', width: '120px', height: '120px' }}
-              >
-                {pendingLoraThumbnail ? (
-                  <>
-                    <img src={URL.createObjectURL(pendingLoraThumbnail)} alt="Thumbnail preview" />
-                    <div className="edit-image-overlay"><span>Change</span></div>
-                  </>
-                ) : !isCreatingLora && editLoraData.thumbnail ? (
-                  <>
-                    <img src={editLoraData.thumbnail} alt="Thumbnail" />
-                    <div className="edit-image-overlay"><span>Change</span></div>
-                  </>
-                ) : (
-                  <span>📷 Square</span>
-                )}
-              </div>
-            </div>
+            {/* Thumbnail Upload — per-version when model tabs exist, else shared.
+                Behaviour: the tile follows the currently-selected model tab.
+                  - Tab 0 (first model): writes BOTH the primary 0.png (used by
+                    Glyphforge's own list view) AND the per-arch 0(<v0>).png.
+                  - Tab 1+: writes ONLY 0(<vN>).png. The primary stays as-is.
+                Display fallback:
+                  - Tab 0 shows existing 0.png if no per-arch override yet.
+                  - Tab 1+ shows only its own 0(<v>).png; if none, an empty
+                    placeholder prompts the user to upload one for that arch. */}
+            {(() => {
+              const models = Array.isArray(editLoraData?.editedModel) ? editLoraData.editedModel : []
+              const hasVersions = models.length > 0
+              const currentModel = hasVersions ? models[editLoraSelectedVersion] : null
+              const versionName = currentModel?.name?.toLowerCase() || ''
+              const isFirstTab = !hasVersions || editLoraSelectedVersion === 0
+
+              // Resolve which "pending" file (just-picked) and which "existing"
+              // URL to show in the tile for the current tab.
+              const pendingPerVersion = versionName ? pendingLoraVersionThumbnails[versionName] : null
+              const pendingFile = isFirstTab
+                ? (pendingPerVersion || pendingLoraThumbnail)
+                : pendingPerVersion
+              const existingVersion = versionName
+                ? editLoraData?.versions?.find(v => v.name.toLowerCase() === versionName)
+                : null
+              const existingUrl = isFirstTab
+                ? (existingVersion?.thumbnail || (!isCreatingLora ? editLoraData?.thumbnail : ''))
+                : (existingVersion?.thumbnail || '')
+
+              const labelText = hasVersions
+                ? `📷 Thumbnail (${currentModel?.name || 'first model'}${isFirstTab ? ' · also primary' : ''}):`
+                : '📷 Thumbnail (shared across all versions):'
+
+              return (
+                <div className="edit-images">
+                  <label style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '0.5rem', display: 'block' }}>
+                    {labelText}
+                  </label>
+                  <div
+                    className={`edit-image-placeholder ${pendingFile || existingUrl ? 'has-image' : ''}`}
+                    onClick={() => {
+                      // 0 = primary path (first-tab semantics), -1 = per-arch only.
+                      setUploadingLoraImageIndex(isFirstTab ? 0 : -1)
+                      loraImageInputRef.current?.click()
+                    }}
+                    style={{ aspectRatio: '1', width: '120px', height: '120px' }}
+                  >
+                    {pendingFile ? (
+                      <>
+                        <img src={URL.createObjectURL(pendingFile)} alt="Thumbnail preview" />
+                        <div className="edit-image-overlay"><span>Change</span></div>
+                      </>
+                    ) : existingUrl ? (
+                      <>
+                        <img src={existingUrl} alt="Thumbnail" />
+                        <div className="edit-image-overlay"><span>Change</span></div>
+                      </>
+                    ) : (
+                      <span>📷 Square</span>
+                    )}
+                  </div>
+                </div>
+              )
+            })()}
 
             {/* Model JSON Editor */}
             <div className="edit-field full-width" style={{ marginTop: '1rem' }}>
@@ -4345,7 +4410,11 @@ function App() {
               style={{ display: 'none' }}
               onChange={(e) => {
                 if (e.target.files[0] && uploadingLoraImageIndex !== null) {
-                  handleLoraImageSelect(uploadingLoraImageIndex, e.target.files[0])
+                  if (uploadingLoraImageIndex === -1) {
+                    handleLoraVersionThumbnailSelect(e.target.files[0])
+                  } else {
+                    handleLoraImageSelect(uploadingLoraImageIndex, e.target.files[0])
+                  }
                 }
                 e.target.value = ''
               }}
