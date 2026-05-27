@@ -131,7 +131,7 @@ export default function ThumbnailCropperModal({
               crop={crop}
               zoom={zoom}
               aspect={1}
-              cropShape="round"
+              cropShape="rect"
               showGrid={false}
               minZoom={1}
               maxZoom={5}
@@ -143,7 +143,7 @@ export default function ThumbnailCropperModal({
           ) : (
             <div className="thumb-cropper-empty">
               <p>No source image.</p>
-              <button className="btn" onClick={pickLocalFile}>📁 Pick a file</button>
+              <button className="update-button" onClick={pickLocalFile}>📁 Pick a file</button>
             </div>
           )}
         </div>
@@ -161,7 +161,7 @@ export default function ThumbnailCropperModal({
               disabled={!srcUrl}
             />
           </label>
-          <button className="btn ghost" onClick={pickLocalFile} disabled={busy}>
+          <button className="cancel-button" onClick={pickLocalFile} disabled={busy}>
             📁 Change source
           </button>
         </div>
@@ -169,8 +169,8 @@ export default function ThumbnailCropperModal({
         {err && <div className="thumb-cropper-error">⚠ {err}</div>}
 
         <div className="thumb-cropper-actions">
-          <button className="btn ghost" onClick={onClose} disabled={busy}>Cancel</button>
-          <button className="btn primary" onClick={handleConfirm} disabled={!srcUrl || !areaPx || busy}>
+          <button className="cancel-button" onClick={onClose} disabled={busy}>Cancel</button>
+          <button className="update-button" onClick={handleConfirm} disabled={!srcUrl || !areaPx || busy}>
             {busy ? 'Cropping…' : 'Apply crop'}
           </button>
         </div>
