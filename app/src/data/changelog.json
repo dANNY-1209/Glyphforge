@@ -6,6 +6,11 @@
         "hash": "ea4b825",
         "type": "fix",
         "message": "MizuCanvas sync no longer falls back to the per-arch preview image when no per-arch thumbnail exists; uses the shared primary thumbnail instead"
+      },
+      {
+        "hash": "ca5dbe0",
+        "type": "feat",
+        "message": "LoRA editor now opens a Discord-style crop modal when changing the thumbnail, with one crop covering 0.png and every per-arch variant"
       }
     ]
   },

@@ -11,6 +11,8 @@ import AccessGate from './components/Auth/AccessGate'
 import { useAuth } from './auth/AuthContext'
 import { useDataCache } from './hooks/useDataCache'
 import { ToastProvider } from './components/Toast/ToastContext'
+import ThumbnailCropperModal from './components/ThumbnailCropperModal'
+import './components/ThumbnailCropperModal.css'
 
 // Helper to get CSS variable value
 const getCSSVar = (name) => {
@@ -127,6 +129,14 @@ function App() {
   const [pendingLoraThumbnail, setPendingLoraThumbnail] = useState(null) // 0.png (shared/primary; what Glyphforge UI displays)
   const [pendingLoraVersionThumbnails, setPendingLoraVersionThumbnails] = useState({}) // { 'illustrious': File, 'anima': File } — per-arch 0(<v>).png
   const [pendingLoraVersionImages, setPendingLoraVersionImages] = useState({}) // { 'illustrious': [file1, file2], 'haruka': [file1, file2] }
+  // Thumbnail cropper modal state. The cropper opens when the user clicks the
+  // 0.png tile in the LoRA edit modal. Source defaults to the current tab's
+  // pending Image 1 (just-picked File) or the existing Image 1 URL. On confirm
+  // we fan out the same cropped File to pendingLoraThumbnail AND every active
+  // arch's pendingLoraVersionThumbnails — so a single crop produces 0.png and
+  // every 0(<arch>).png in one save.
+  const [loraThumbCropperOpen, setLoraThumbCropperOpen] = useState(false)
+  const [loraThumbCropperSource, setLoraThumbCropperSource] = useState(null)
   const [pendingLoraSafetensors, setPendingLoraSafetensors] = useState({}) // { versionName: File }
   const [editLoraSelectedVersion, setEditLoraSelectedVersion] = useState(0) // index of selected model version
   const [openRequestsForLink, setOpenRequestsForLink] = useState([]) // pending/in_progress lora requests for "Link to request"
@@ -4273,9 +4283,18 @@ function App() {
                   <div
                     className={`edit-image-placeholder ${pendingFile || existingUrl ? 'has-image' : ''}`}
                     onClick={() => {
-                      // 0 = primary path (first-tab semantics), -1 = per-arch only.
-                      setUploadingLoraImageIndex(isFirstTab ? 0 : -1)
-                      loraImageInputRef.current?.click()
+                      // Open the cropper instead of a raw file picker. Source
+                      // resolution order:
+                      //   1. The current tab's pending Image 1 (just-picked
+                      //      File, not yet uploaded) — lets the user submit
+                      //      0/1/2 in one save without two round-trips.
+                      //   2. The current tab's existing Image 1 URL on disk.
+                      //   3. null (cropper falls back to its own file picker).
+                      const v = versionName
+                      const pendingV1 = v ? (pendingLoraVersionImages[v]?.[0] || null) : null
+                      const existingV1 = existingVersion?.images?.[0] || null
+                      setLoraThumbCropperSource(pendingV1 || existingV1 || null)
+                      setLoraThumbCropperOpen(true)
                     }}
                     style={{ aspectRatio: '1', width: '120px', height: '120px' }}
                   >
@@ -4669,6 +4688,38 @@ function App() {
           </div>
         </div>
       )}
+
+      {/* Thumbnail cropper for LoRA 0.png — applies the cropped square to BOTH
+          the primary 0.png AND every active arch's 0(<arch>).png in one shot,
+          so toggling tabs is no longer required for full-coverage thumbnails. */}
+      <ThumbnailCropperModal
+        open={loraThumbCropperOpen}
+        source={loraThumbCropperSource}
+        title="Crop Thumbnail (0.png + per-arch)"
+        onClose={() => {
+          setLoraThumbCropperOpen(false)
+          setLoraThumbCropperSource(null)
+        }}
+        onConfirm={(croppedFile) => {
+          // Fan out: primary thumbnail + every active arch's per-version tile.
+          // Cloning the File per slot keeps each FormData append independent.
+          setPendingLoraThumbnail(croppedFile)
+          const models = Array.isArray(editLoraData?.editedModel) ? editLoraData.editedModel : []
+          if (models.length > 0) {
+            setPendingLoraVersionThumbnails(prev => {
+              const next = { ...prev }
+              for (const m of models) {
+                const v = (m?.name || '').toLowerCase()
+                if (!v) continue
+                next[v] = new File([croppedFile], `0(${v}).png`, { type: 'image/png' })
+              }
+              return next
+            })
+          }
+          setLoraThumbCropperOpen(false)
+          setLoraThumbCropperSource(null)
+        }}
+      />
 
       {/* Fn LoRA Edit Modal */}
       {isEditingFnLora && editFnLoraData && (

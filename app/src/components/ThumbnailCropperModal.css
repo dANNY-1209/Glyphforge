@@ -1,0 +1,71 @@
+/* Thumbnail cropper modal — square 512×512 output, round preview viewport
+   (Discord-style). Lives inside .popup-overlay; reuses .popup-content as the
+   container so it inherits z-index / centring from existing modal styles. */
+
+.thumb-cropper-modal {
+  width: min(560px, 95vw);
+  max-width: 560px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  padding: 1.25rem;
+}
+
+.thumb-cropper-stage {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  background: #000;
+  border-radius: 10px;
+  overflow: hidden;
+  /* react-easy-crop's container needs position:relative + explicit height */
+}
+
+.thumb-cropper-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  color: var(--text-secondary, #9aa3b2);
+  font-size: 0.95rem;
+}
+
+.thumb-cropper-controls {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.thumb-cropper-zoom {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  color: var(--text-secondary, #9aa3b2);
+  font-size: 0.85rem;
+  min-width: 200px;
+}
+
+.thumb-cropper-zoom input[type="range"] {
+  flex: 1 1 auto;
+  accent-color: var(--accent, #7aa2ff);
+}
+
+.thumb-cropper-error {
+  color: #ff6b6b;
+  background: rgba(255, 107, 107, 0.1);
+  border: 1px solid rgba(255, 107, 107, 0.35);
+  border-radius: 6px;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.85rem;
+}
+
+.thumb-cropper-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
