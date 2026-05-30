@@ -1,5 +1,15 @@
 [
   {
+    "date": "2026-05-30",
+    "changes": [
+      {
+        "hash": "d30c35a",
+        "type": "fix",
+        "message": "Cropping a thumbnail now only affects the current model tab, so adding a new architecture won't overwrite existing per-arch thumbnails."
+      }
+    ]
+  },
+  {
     "date": "2026-05-27",
     "changes": [
       {

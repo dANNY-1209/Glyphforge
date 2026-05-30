@@ -4689,32 +4689,51 @@ function App() {
         </div>
       )}
 
-      {/* Thumbnail cropper for LoRA 0.png — applies the cropped square to BOTH
-          the primary 0.png AND every active arch's 0(<arch>).png in one shot,
-          so toggling tabs is no longer required for full-coverage thumbnails. */}
+      {/* Thumbnail cropper for LoRA 0.png — writes ONLY the currently
+          selected model tab's slots (primary 0.png on tab 0, plus this
+          tab's per-arch 0(<arch>).png). Other arches are never touched,
+          so adding a new arch to an existing LoRA can't accidentally
+          repaint the existing arch's thumbnail. */}
       <ThumbnailCropperModal
         open={loraThumbCropperOpen}
         source={loraThumbCropperSource}
-        title="Crop Thumbnail (0.png + per-arch)"
+        title="Crop Thumbnail (current tab only)"
         onClose={() => {
           setLoraThumbCropperOpen(false)
           setLoraThumbCropperSource(null)
         }}
         onConfirm={(croppedFile) => {
-          // Fan out: primary thumbnail + every active arch's per-version tile.
-          // Cloning the File per slot keeps each FormData append independent.
-          setPendingLoraThumbnail(croppedFile)
+          // Apply the cropped square to the currently-selected model tab only.
+          // Earlier this fan-out wrote every active arch's per-version tile in
+          // one shot, which broke a real workflow: user adds a *new* arch to
+          // an existing LoRA, opens the cropper on that arch's tab, confirms
+          // — and the new crop silently overwrote the previously-good
+          // per-arch thumbnails of all the *other* arches, then the
+          // MizuCanvas sync uploaded the wrong image for those rows.
+          //
+          // Scope rules (must match the tile's display semantics above):
+          //   - Tab 0  → write primary 0.png AND its own 0(v0).png
+          //   - Tab N+ → write only its own 0(vN).png
+          // Other arches keep whatever was on disk / staged previously.
           const models = Array.isArray(editLoraData?.editedModel) ? editLoraData.editedModel : []
-          if (models.length > 0) {
-            setPendingLoraVersionThumbnails(prev => {
-              const next = { ...prev }
-              for (const m of models) {
-                const v = (m?.name || '').toLowerCase()
-                if (!v) continue
-                next[v] = new File([croppedFile], `0(${v}).png`, { type: 'image/png' })
-              }
-              return next
-            })
+          const hasVersions = models.length > 0
+          const idx = editLoraSelectedVersion || 0
+          const currentArch = hasVersions
+            ? ((models[idx]?.name || '').toLowerCase())
+            : ''
+          const isFirstTab = !hasVersions || idx === 0
+
+          if (isFirstTab) {
+            setPendingLoraThumbnail(croppedFile)
+          }
+          if (currentArch) {
+            setPendingLoraVersionThumbnails(prev => ({
+              ...prev,
+              [currentArch]: new File([croppedFile], `0(${currentArch}).png`, { type: 'image/png' }),
+            }))
+          } else if (!hasVersions) {
+            // Versionless LoRA: primary 0.png is the only target.
+            setPendingLoraThumbnail(croppedFile)
           }
           setLoraThumbCropperOpen(false)
           setLoraThumbCropperSource(null)
