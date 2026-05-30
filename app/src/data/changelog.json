@@ -1,5 +1,15 @@
 [
   {
+    "date": "2026-05-31",
+    "changes": [
+      {
+        "hash": "23c1789",
+        "type": "feat",
+        "message": "Editing a LoRA thumbnail now syncs to MizuCanvas immediately, without re-uploading the safetensors."
+      }
+    ]
+  },
+  {
     "date": "2026-05-30",
     "changes": [
       {

@@ -256,3 +256,145 @@ export async function syncCharacterLora({ loraId, loraDir, meta, notifyDiscord }
   }
   return results
 }
+
+/** Push a thumbnail-only update to MizuCanvas for one (label, arch).
+ *
+ * Uses MizuCanvas service endpoint `PUT /api/service/loras/by-label/thumbnail`,
+ * which replaces the LoRA row's WEBP without re-uploading the .safetensors
+ * (which would be 200-400 MB per call). 404 from that endpoint means the
+ * LoRA row doesn't exist on MizuCanvas yet for that arch — caller should
+ * fall back to the full `uploadOneVersion` path or just skip silently.
+ *
+ * @param {object} opts
+ * @param {string} opts.label
+ * @param {string} opts.arch          'sdxl' | 'qwen_image'
+ * @param {string} opts.thumbnailPath absolute path
+ * @returns {Promise<{ok: boolean, status?: number, body?: any, error?: string}>}
+ */
+export async function pushThumbnailOnly({ label, arch, thumbnailPath }) {
+  const url = baseUrl()
+  const buf = await fs.promises.readFile(thumbnailPath)
+  const name = path.basename(thumbnailPath)
+  const ext = path.extname(name).toLowerCase()
+  const mime =
+    ext === '.png' ? 'image/png'
+    : ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg'
+    : ext === '.webp' ? 'image/webp'
+    : 'application/octet-stream'
+
+  const fd = new FormData()
+  fd.append('label', label)
+  fd.append('architecture', arch)
+  fd.append('thumbnail', new Blob([buf], { type: mime }), name)
+
+  const resp = await fetch(`${url}/api/service/loras/by-label/thumbnail`, {
+    method: 'PUT',
+    headers: headers(),
+    body: fd,
+  })
+  const text = await resp.text().catch(() => '')
+  let body
+  try { body = text ? JSON.parse(text) : null } catch { body = text }
+
+  if (!resp.ok) {
+    return { ok: false, status: resp.status, error: typeof body === 'string' ? body.slice(0, 300) : (body?.detail || `HTTP ${resp.status}`) }
+  }
+  return { ok: true, status: resp.status, body }
+}
+
+/**
+ * Sync a thumbnail change for a character LoRA → MizuCanvas. Triggered by
+ * Glyphforge's /api/loras/:id/image/0 endpoint after a 0.png or per-arch
+ * 0(<tag>).png has been written to disk.
+ *
+ * Behaviour:
+ *   - If `version` is given (e.g. 'illustrious' / 'anima'), only that arch
+ *     is pushed.
+ *   - If `version` is empty (primary 0.png upload, no version field), every
+ *     arch present in `meta.model[]` that does NOT have its own
+ *     0(<tag>).png override gets the new primary pushed (those are the
+ *     arches whose MizuCanvas thumbnail is sourced from 0.png via
+ *     `findThumbnail`'s fallback chain).
+ *
+ * Fire-and-forget; results are logged + reported via Discord on failure.
+ *
+ * @param {object} opts
+ * @param {string} opts.loraId      folder name = MizuCanvas label
+ * @param {string} opts.loraDir     absolute path to .../character/<loraId>
+ * @param {object} opts.meta        parsed meta.json (for model[] arches)
+ * @param {string} [opts.version]   '' for primary, else lowercase arch tag
+ * @param {(eventType: string, data: object) => void} [opts.notifyDiscord]
+ * @returns {Promise<Array<{arch, ok, error?}>>}
+ */
+export async function syncCharacterLoraThumbnail({ loraId, loraDir, meta, version, notifyDiscord }) {
+  if (!isEnabled()) return []
+  if (!meta || !Array.isArray(meta.model) || meta.model.length === 0) return []
+
+  // Decide which (arch, thumbnailPath) tuples to push.
+  const targets = []
+  if (version) {
+    // Single per-arch tile was just updated.
+    const tag = String(version).toLowerCase()
+    const arch = tag === 'anima' ? 'qwen_image' : tag === 'illustrious' ? 'sdxl' : null
+    if (!arch) {
+      console.warn(`[mizu-sync] ${loraId}: thumbnail version "${version}" 不認識架構，跳過`)
+      return []
+    }
+    const thumbPath = findThumbnail(loraDir, arch)
+    if (thumbPath) targets.push({ arch, thumbnailPath: thumbPath })
+  } else {
+    // Primary 0.png was updated. Push it to every arch that doesn't have
+    // its own 0(<tag>).png override on disk (those arches' MizuCanvas
+    // thumbnail comes from 0.png via the fallback chain).
+    const seen = new Set()
+    for (const v of meta.model) {
+      const arch = mapArchitecture(v && v.name)
+      if (!arch || seen.has(arch)) continue
+      seen.add(arch)
+      const tag = archTag(arch)
+      const override = path.join(loraDir, `0(${tag}).png`)
+      if (fs.existsSync(override)) continue // per-arch tile wins; don't clobber it with primary
+      const primary = path.join(loraDir, '0.png')
+      if (!fs.existsSync(primary)) continue
+      targets.push({ arch, thumbnailPath: primary })
+    }
+  }
+
+  if (targets.length === 0) return []
+
+  const results = []
+  for (const t of targets) {
+    try {
+      const r = await pushThumbnailOnly({ label: loraId, arch: t.arch, thumbnailPath: t.thumbnailPath })
+      if (r.ok) {
+        console.log(`[mizu-sync] ${loraId} [${t.arch}] thumbnail → MizuCanvas id=${r.body?.id} (${path.basename(t.thumbnailPath)})`)
+        results.push({ arch: t.arch, ok: true })
+      } else if (r.status === 404) {
+        console.log(`[mizu-sync] ${loraId} [${t.arch}] thumbnail skipped — LoRA row not on MizuCanvas yet (404)`)
+        results.push({ arch: t.arch, ok: true, skipped: true })
+      } else {
+        console.error(`[mizu-sync] ${loraId} [${t.arch}] thumbnail failed: ${r.status} ${r.error}`)
+        results.push({ arch: t.arch, ok: false, error: `${r.status}: ${r.error}` })
+      }
+    } catch (e) {
+      console.error(`[mizu-sync] ${loraId} [${t.arch}] thumbnail exception: ${e.message}`)
+      results.push({ arch: t.arch, ok: false, error: e.message })
+    }
+  }
+
+  if (notifyDiscord) {
+    const failed = results.filter((r) => !r.ok)
+    if (failed.length > 0) {
+      try {
+        notifyDiscord('mizu_sync_failed', {
+          loraId,
+          label: meta.character || loraId,
+          failures: failed.map((f) => `${f.arch} (thumbnail): ${f.error}`).join('\n'),
+        })
+      } catch (e) {
+        console.error(`[mizu-sync] notify dispatch failed: ${e.message}`)
+      }
+    }
+  }
+  return results
+}

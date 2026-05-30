@@ -2622,6 +2622,32 @@ app.post('/api/loras/:id/image/:imageIndex', authMiddleware, loraImageUpload.sin
       }
     }
 
+    // Fire-and-forget MizuCanvas thumbnail-only sync. Only triggers when:
+    //   - The uploaded image is a thumbnail (imageIndex === '0')
+    //   - sync env is enabled
+    //   - meta.json exists with at least one model entry
+    // We deliberately do this for every 0.png / 0(<arch>).png write —
+    // editing a thumbnail used to require re-uploading the safetensors
+    // to propagate to MizuCanvas, which is wasteful and a usability bug.
+    if (imageIndex === '0' && mizuSync.isEnabled()) {
+      void (async () => {
+        try {
+          const metaPath = path.join(loraPath, 'meta.json')
+          if (!fs.existsSync(metaPath)) return
+          const meta = JSON.parse(fs.readFileSync(metaPath, 'utf-8'))
+          await mizuSync.syncCharacterLoraThumbnail({
+            loraId: id,
+            loraDir: loraPath,
+            meta,
+            version,
+            notifyDiscord: sendDiscordNotification,
+          })
+        } catch (e) {
+          console.error(`[mizu-sync] thumbnail dispatch failed for ${id}:`, e.message)
+        }
+      })()
+    }
+
 
     res.json({ 
       success: true, 
