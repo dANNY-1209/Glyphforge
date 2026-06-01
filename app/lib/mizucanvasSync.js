@@ -23,6 +23,59 @@ import path from 'path'
 
 const CHUNK_SIZE = 50 * 1024 * 1024 // 50MB，配合 MizuCanvas 提供的 hint，也避開 CF Tunnel 100MB
 
+// In-memory per-LoRA sync status. Used by GET /api/loras/:id/mizu-sync-status
+// so the frontend can decouple "Glyphforge upload done" from "MizuCanvas sync
+// done" instead of both fates riding on the single safetensors POST promise.
+//
+// Status shape:
+//   { state: 'running'|'done'|'failed'|'partial',
+//     kind: 'full'|'thumbnail',
+//     startedAt: epoch_ms,
+//     finishedAt?: epoch_ms,
+//     results?: [{arch, ok, error?}],
+//   }
+// Old entries are pruned after MIZU_STATUS_TTL_MS so the map never leaks.
+const MIZU_STATUS_TTL_MS = 30 * 60 * 1000 // 30min
+const syncStatus = new Map()
+
+function pruneSyncStatus() {
+  const cutoff = Date.now() - MIZU_STATUS_TTL_MS
+  for (const [k, v] of syncStatus) {
+    if (v.finishedAt && v.finishedAt < cutoff) syncStatus.delete(k)
+  }
+}
+
+export function getSyncStatus(loraId) {
+  pruneSyncStatus()
+  return syncStatus.get(loraId) || null
+}
+
+export function markSyncStart(loraId, kind = 'full') {
+  syncStatus.set(loraId, {
+    state: 'running',
+    kind,
+    startedAt: Date.now(),
+  })
+}
+
+export function markSyncDone(loraId, results) {
+  const prev = syncStatus.get(loraId) || { kind: 'full', startedAt: Date.now() }
+  const arr = Array.isArray(results) ? results : []
+  const okCount = arr.filter((r) => r.ok).length
+  const failCount = arr.filter((r) => !r.ok).length
+  let state
+  if (arr.length === 0) state = 'done' // nothing to do counts as success
+  else if (failCount === 0) state = 'done'
+  else if (okCount === 0) state = 'failed'
+  else state = 'partial'
+  syncStatus.set(loraId, {
+    ...prev,
+    state,
+    finishedAt: Date.now(),
+    results: arr.map((r) => ({ arch: r.arch, ok: !!r.ok, error: r.error })),
+  })
+}
+
 export function isEnabled() {
   return (
     process.env.MIZUCANVAS_SYNC_ENABLED === 'true' &&
@@ -201,6 +254,7 @@ export async function syncCharacterLora({ loraId, loraDir, meta, notifyDiscord }
   if (!isEnabled()) return []
   if (!meta || !Array.isArray(meta.model) || meta.model.length === 0) return []
 
+  markSyncStart(loraId, 'full')
   const seenArchs = new Set()
   const results = []
   for (const v of meta.model) {
@@ -254,6 +308,7 @@ export async function syncCharacterLora({ loraId, loraDir, meta, notifyDiscord }
       }
     }
   }
+  markSyncDone(loraId, results)
   return results
 }
 
@@ -330,6 +385,7 @@ export async function syncCharacterLoraThumbnail({ loraId, loraDir, meta, versio
   if (!isEnabled()) return []
   if (!meta || !Array.isArray(meta.model) || meta.model.length === 0) return []
 
+  markSyncStart(loraId, 'thumbnail')
   // Decide which (arch, thumbnailPath) tuples to push.
   const targets = []
   if (version) {
@@ -360,7 +416,10 @@ export async function syncCharacterLoraThumbnail({ loraId, loraDir, meta, versio
     }
   }
 
-  if (targets.length === 0) return []
+  if (targets.length === 0) {
+    markSyncDone(loraId, [])
+    return []
+  }
 
   const results = []
   for (const t of targets) {
@@ -396,5 +455,6 @@ export async function syncCharacterLoraThumbnail({ loraId, loraDir, meta, versio
       }
     }
   }
+  markSyncDone(loraId, results)
   return results
 }

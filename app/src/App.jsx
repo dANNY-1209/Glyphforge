@@ -166,6 +166,85 @@ function App() {
   // Background upload tracking for Fn LoRA
   const [backgroundUploads, setBackgroundUploads] = useState({}) // { fnLoraId: { status: 'uploading'|'done'|'error', fileName: string, progress?: number } }
 
+  // MizuCanvas sync state tracking — decoupled from the Glyphforge upload
+  // status above. Shows a small "🔄 MizuCanvas 同步中…" / "✅" / "⚠️" label on
+  // the LoRA card after a safetensors upload completes locally, while the
+  // backend's fire-and-forget MizuCanvas push runs in the background.
+  // Shape: { [loraId]: { state: 'running'|'done'|'failed'|'partial'|'idle',
+  //                     finishedAt?, results? } }
+  const [mizuSyncs, setMizuSyncs] = useState({})
+
+  // Poll backend for MizuCanvas sync status of one LoRA until it reaches a
+  // terminal state. Started after a safetensors upload that the server
+  // reported (mizuSyncStarted=true). 5s cadence, 10min cap (mizu chunked
+  // upload of a 400MB safetensors over the cloudflared tunnel typically
+  // finishes in 1–3min, but the tunnel can flap during Oscar's host reboots
+  // — we let it ride a while). On 'done': dismiss after 4s. On 'failed' /
+  // 'partial': keep visible until user clicks it away.
+  const startMizuSyncPolling = (loraId) => {
+    setMizuSyncs((prev) => ({ ...prev, [loraId]: { state: 'running', startedAt: Date.now() } }))
+    const POLL_INTERVAL_MS = 5000
+    const MAX_DURATION_MS = 10 * 60 * 1000
+    const startedAt = Date.now()
+    const token = localStorage.getItem('admin-token')
+    const tick = async () => {
+      if (Date.now() - startedAt > MAX_DURATION_MS) {
+        setMizuSyncs((prev) => ({
+          ...prev,
+          [loraId]: { state: 'failed', error: 'polling timeout', finishedAt: Date.now() },
+        }))
+        return
+      }
+      try {
+        const r = await fetch(`/api/loras/${encodeURIComponent(loraId)}/mizu-sync-status`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        })
+        if (!r.ok) {
+          // Don't tear down the UI for transient errors — try again next tick.
+          setTimeout(tick, POLL_INTERVAL_MS)
+          return
+        }
+        const j = await r.json()
+        if (j.state === 'running' || j.state === 'idle') {
+          // 'idle' can race the initial mark — if we still haven't seen
+          // 'running' within ~10s, assume the server lost track and stop.
+          if (j.state === 'idle' && Date.now() - startedAt > 15000) {
+            setMizuSyncs((prev) => {
+              const next = { ...prev }
+              delete next[loraId]
+              return next
+            })
+            return
+          }
+          setTimeout(tick, POLL_INTERVAL_MS)
+          return
+        }
+        // terminal
+        setMizuSyncs((prev) => ({ ...prev, [loraId]: { ...j } }))
+        if (j.state === 'done') {
+          setTimeout(() => {
+            setMizuSyncs((prev) => {
+              const next = { ...prev }
+              delete next[loraId]
+              return next
+            })
+          }, 4000)
+        }
+      } catch {
+        setTimeout(tick, POLL_INTERVAL_MS)
+      }
+    }
+    setTimeout(tick, 1500) // small initial delay so the server has a tick to call markSyncStart
+  }
+
+  const dismissMizuSync = (loraId) => {
+    setMizuSyncs((prev) => {
+      const next = { ...prev }
+      delete next[loraId]
+      return next
+    })
+  }
+
   // Costume category state
   const [collapsedCostumeTypes, setCollapsedCostumeTypes] = useState(() => {
     try {
@@ -1236,6 +1315,12 @@ function App() {
             const uploadResult = await uploadRes.json()
             console.log('Background upload result:', uploadResult)
             if (!uploadRes.ok) throw new Error(uploadResult.error || 'Upload failed')
+            // If the server kicked off a MizuCanvas sync, start polling its
+            // status so the UI can show 同步中 / ✅ / ⚠️ independently of the
+            // (already-finished) Glyphforge upload.
+            if (uploadResult.mizuSyncStarted) {
+              startMizuSyncPolling(loraId)
+            }
           }
           
           // Upload complete
@@ -2642,6 +2727,7 @@ function App() {
                           {companyLoras.length > 0 ? (
                             companyLoras.map((lora) => {
                               const uploadStatus = backgroundUploads[`lora-${lora.id}`]
+                              const mizuStatus = mizuSyncs[lora.id]
                               return (
                                 <div
                                   key={lora.id}
@@ -2667,6 +2753,29 @@ function App() {
                                     {uploadStatus?.status === 'error' && (
                                       <div className="upload-overlay error">
                                         <span>✗ Failed</span>
+                                      </div>
+                                    )}
+                                    {/* MizuCanvas sync indicator — independent of the Glyphforge upload
+                                        state. Sits in the bottom-right of the preview so it doesn't
+                                        cover the thumbnail; click to dismiss when failed/partial. */}
+                                    {mizuStatus && (
+                                      <div
+                                        className={`mizu-sync-badge ${mizuStatus.state}`}
+                                        onClick={(e) => {
+                                          e.stopPropagation()
+                                          if (mizuStatus.state !== 'running') dismissMizuSync(lora.id)
+                                        }}
+                                        title={
+                                          mizuStatus.state === 'running' ? 'MizuCanvas 同步中…'
+                                          : mizuStatus.state === 'done' ? 'MizuCanvas 同步成功'
+                                          : mizuStatus.state === 'partial' ? `部分架構失敗：${(mizuStatus.results||[]).filter(r=>!r.ok).map(r=>`${r.arch}: ${r.error||'?'}`).join('; ')}`
+                                          : `MizuCanvas 同步失敗：${(mizuStatus.results||[]).filter(r=>!r.ok).map(r=>`${r.arch}: ${r.error||'?'}`).join('; ') || mizuStatus.error || ''}`
+                                        }
+                                      >
+                                        {mizuStatus.state === 'running' && '🔄 Mizu 同步中…'}
+                                        {mizuStatus.state === 'done' && '✅ Mizu'}
+                                        {mizuStatus.state === 'partial' && '⚠️ Mizu 部分失敗'}
+                                        {mizuStatus.state === 'failed' && '⚠️ Mizu 失敗'}
                                       </div>
                                     )}
                                   </div>

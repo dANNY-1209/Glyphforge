@@ -3176,6 +3176,28 @@ label {
   pointer-events: none;
 }
 
+/* MizuCanvas sync status badge — sits on the LoRA preview, decoupled from
+   the upload-overlay above. Small enough to not cover the thumbnail. */
+.mizu-sync-badge {
+  position: absolute;
+  bottom: 6px;
+  right: 6px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #fff;
+  background: rgba(59, 130, 246, 0.85);
+  z-index: 2;
+  cursor: default;
+  user-select: none;
+}
+.mizu-sync-badge.running { background: rgba(59, 130, 246, 0.85); }
+.mizu-sync-badge.done    { background: rgba(34, 197, 94, 0.85); }
+.mizu-sync-badge.partial { background: rgba(234, 179, 8, 0.9); cursor: pointer; }
+.mizu-sync-badge.failed  { background: rgba(239, 68, 68, 0.9); cursor: pointer; }
+
+
 .lora-preview {
   position: relative;
 }

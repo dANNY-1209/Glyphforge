@@ -1,5 +1,15 @@
 [
   {
+    "date": "2026-06-01",
+    "changes": [
+      {
+        "hash": "96eff14",
+        "type": "feat",
+        "message": "上傳 LoRA 時，MizuCanvas 同步狀態獨立顯示在卡片上；同步失敗會在 Discord 直接 ping 管理員"
+      }
+    ]
+  },
+  {
     "date": "2026-05-31",
     "changes": [
       {

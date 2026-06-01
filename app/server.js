@@ -557,6 +557,15 @@ function buildDiscordEmbed(eventType, data) {
       description = `\`\`\`\n${trimmed}\n\`\`\``
     }
     if (data.loraId) fields.push({ name: 'LoRA', value: String(data.loraId), inline: true })
+    // Ping the super-admin so the failure is loud and not buried in webhook noise.
+    // The webhook role/permission must be allowed to mention the user, otherwise
+    // Discord will render the mention as plain text — that's still fine, just
+    // not a push.
+    const adminId = process.env.SUPER_ADMIN_DISCORD_ID
+    if (adminId && !data.mentionContent) {
+      data.mentionContent = `<@${adminId}> MizuCanvas 同步失敗，需要手動補同步`
+      data.mentionDiscordId = String(adminId)
+    }
   }
 
   const embed = {
@@ -2679,7 +2688,17 @@ app.post('/api/loras/:id/safetensors', authMiddleware, loraSafetensorsUpload.sin
     // Fire-and-forget MizuCanvas auto-sync. Only triggers if env enabled. We
     // wait until safetensors is on disk (now) — both initial create and version
     // updates land here. Reading meta + dispatching is async; we don't await.
+    let mizuSyncStarted = false
     if (mizuSync.isEnabled()) {
+      const metaPath = path.join(loraPath, 'meta.json')
+      if (fs.existsSync(metaPath)) {
+        try {
+          const peekMeta = JSON.parse(fs.readFileSync(metaPath, 'utf-8'))
+          if (peekMeta && Array.isArray(peekMeta.model) && peekMeta.model.length > 0) {
+            mizuSyncStarted = true
+          }
+        } catch { /* fall through — async dispatcher will log */ }
+      }
       void (async () => {
         try {
           const metaPath = path.join(loraPath, 'meta.json')
@@ -2700,12 +2719,24 @@ app.post('/api/loras/:id/safetensors', authMiddleware, loraSafetensorsUpload.sin
     res.json({ 
       success: true, 
       filename: req.file.filename,
-      path: `/${LORA_FOLDER_NAME}/character/${id}/${req.file.filename}`
+      path: `/${LORA_FOLDER_NAME}/character/${id}/${req.file.filename}`,
+      mizuSyncStarted,
     })
   } catch (error) {
     console.error('Error uploading Character LoRA safetensors:', error)
     res.status(500).json({ error: 'Failed to upload safetensors: ' + error.message })
   }
+})
+
+// MizuCanvas sync status — polled by the frontend to decouple the
+// "Glyphforge upload done" state from "MizuCanvas sync done". Auth-required
+// because failure messages contain upstream error strings. Read-only.
+app.get('/api/loras/:id/mizu-sync-status', authMiddleware, (req, res) => {
+  const { id } = req.params
+  if (!requireSlug('id', id, res)) return
+  const status = mizuSync.getSyncStatus(id)
+  if (!status) return res.json({ state: 'idle' })
+  res.json(status)
 })
 
 // Delete Character LoRA safetensors file
