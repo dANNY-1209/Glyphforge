@@ -326,6 +326,25 @@ export async function syncCharacterLora({ loraId, loraDir, meta, notifyDiscord }
  * @param {string} opts.thumbnailPath absolute path
  * @returns {Promise<{ok: boolean, status?: number, body?: any, error?: string}>}
  */
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+
+// Best-effort verify (via /lookup) that the LoRA row exists and already carries
+// a thumbnail. Used to confirm a thumbnail PUT actually landed when the HTTP
+// call died at the transport layer ("fetch failed") even though the server may
+// have committed it. Any error returns false.
+async function verifyThumbnailLanded({ label, arch }) {
+  try {
+    const url = baseUrl()
+    const q = `label=${encodeURIComponent(label)}&architecture=${encodeURIComponent(arch)}`
+    const r = await fetch(`${url}/api/service/loras/lookup?${q}`, { headers: headers() })
+    if (!r.ok) return false
+    const j = await r.json().catch(() => null)
+    return !!(j && j.found && j.has_thumbnail)
+  } catch {
+    return false
+  }
+}
+
 export async function pushThumbnailOnly({ label, arch, thumbnailPath }) {
   const url = baseUrl()
   const buf = await fs.promises.readFile(thumbnailPath)
@@ -337,24 +356,45 @@ export async function pushThumbnailOnly({ label, arch, thumbnailPath }) {
     : ext === '.webp' ? 'image/webp'
     : 'application/octet-stream'
 
-  const fd = new FormData()
-  fd.append('label', label)
-  fd.append('architecture', arch)
-  fd.append('thumbnail', new Blob([buf], { type: mime }), name)
+  // Retry transport errors ("fetch failed" — common when this small PUT races
+  // the heavy full-sync through the Cloudflare tunnel) and 5xx a few times.
+  // A real 4xx (incl. 404 = row not on MizuCanvas yet) is returned immediately.
+  const MAX_ATTEMPTS = 3
+  let lastErr
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try {
+      const fd = new FormData()
+      fd.append('label', label)
+      fd.append('architecture', arch)
+      fd.append('thumbnail', new Blob([buf], { type: mime }), name)
 
-  const resp = await fetch(`${url}/api/service/loras/by-label/thumbnail`, {
-    method: 'PUT',
-    headers: headers(),
-    body: fd,
-  })
-  const text = await resp.text().catch(() => '')
-  let body
-  try { body = text ? JSON.parse(text) : null } catch { body = text }
+      const resp = await fetch(`${url}/api/service/loras/by-label/thumbnail`, {
+        method: 'PUT',
+        headers: headers(),
+        body: fd,
+      })
+      const text = await resp.text().catch(() => '')
+      let body
+      try { body = text ? JSON.parse(text) : null } catch { body = text }
 
-  if (!resp.ok) {
-    return { ok: false, status: resp.status, error: typeof body === 'string' ? body.slice(0, 300) : (body?.detail || `HTTP ${resp.status}`) }
+      if (resp.ok) return { ok: true, status: resp.status, body }
+      if (resp.status === 404) return { ok: false, status: 404 }
+      if (resp.status < 500 || attempt === MAX_ATTEMPTS) {
+        return { ok: false, status: resp.status, error: typeof body === 'string' ? body.slice(0, 300) : (body?.detail || `HTTP ${resp.status}`) }
+      }
+      lastErr = new Error(`HTTP ${resp.status}`) // 5xx — fall through to retry
+    } catch (e) {
+      lastErr = e // transport-level error — retry
+    }
+    if (attempt < MAX_ATTEMPTS) await sleep(500 * attempt)
   }
-  return { ok: true, status: resp.status, body }
+
+  // Every attempt died before a clean response. The server frequently commits
+  // it anyway — verify via /lookup before declaring a failure.
+  if (await verifyThumbnailLanded({ label, arch })) {
+    return { ok: true, verified: true }
+  }
+  return { ok: false, error: `transport failed after ${MAX_ATTEMPTS} attempts: ${lastErr?.message || 'fetch failed'}` }
 }
 
 /**
@@ -371,17 +411,18 @@ export async function pushThumbnailOnly({ label, arch, thumbnailPath }) {
  *     arches whose MizuCanvas thumbnail is sourced from 0.png via
  *     `findThumbnail`'s fallback chain).
  *
- * Fire-and-forget; results are logged + reported via Discord on failure.
+ * Fire-and-forget; results are logged. Thumbnail-only failures are NOT raised
+ * as the red "needs manual re-sync" Discord alert (non-critical — the full
+ * safetensors sync carries the thumbnail, and drops here usually still land).
  *
  * @param {object} opts
  * @param {string} opts.loraId      folder name = MizuCanvas label
  * @param {string} opts.loraDir     absolute path to .../character/<loraId>
  * @param {object} opts.meta        parsed meta.json (for model[] arches)
  * @param {string} [opts.version]   '' for primary, else lowercase arch tag
- * @param {(eventType: string, data: object) => void} [opts.notifyDiscord]
  * @returns {Promise<Array<{arch, ok, error?}>>}
  */
-export async function syncCharacterLoraThumbnail({ loraId, loraDir, meta, version, notifyDiscord }) {
+export async function syncCharacterLoraThumbnail({ loraId, loraDir, meta, version }) {
   if (!isEnabled()) return []
   if (!meta || !Array.isArray(meta.model) || meta.model.length === 0) return []
 
@@ -426,7 +467,8 @@ export async function syncCharacterLoraThumbnail({ loraId, loraDir, meta, versio
     try {
       const r = await pushThumbnailOnly({ label: loraId, arch: t.arch, thumbnailPath: t.thumbnailPath })
       if (r.ok) {
-        console.log(`[mizu-sync] ${loraId} [${t.arch}] thumbnail → MizuCanvas id=${r.body?.id} (${path.basename(t.thumbnailPath)})`)
+        const how = r.verified ? '(verified via lookup after transport retries)' : `id=${r.body?.id}`
+        console.log(`[mizu-sync] ${loraId} [${t.arch}] thumbnail → MizuCanvas ${how} (${path.basename(t.thumbnailPath)})`)
         results.push({ arch: t.arch, ok: true })
       } else if (r.status === 404) {
         console.log(`[mizu-sync] ${loraId} [${t.arch}] thumbnail skipped — LoRA row not on MizuCanvas yet (404)`)
@@ -441,19 +483,18 @@ export async function syncCharacterLoraThumbnail({ loraId, loraDir, meta, versio
     }
   }
 
-  if (notifyDiscord) {
-    const failed = results.filter((r) => !r.ok)
-    if (failed.length > 0) {
-      try {
-        notifyDiscord('mizu_sync_failed', {
-          loraId,
-          label: meta.character || loraId,
-          failures: failed.map((f) => `${f.arch} (thumbnail): ${f.error}`).join('\n'),
-        })
-      } catch (e) {
-        console.error(`[mizu-sync] notify dispatch failed: ${e.message}`)
-      }
-    }
+  // Thumbnail-only sync is non-critical: the full safetensors upload already
+  // ships the thumbnail, and transient transport drops here usually still land
+  // server-side (pushThumbnailOnly retries + verifies via /lookup). So we
+  // deliberately DON'T raise the red "需手動補同步" Discord alert for thumbnail
+  // failures — that alert is reserved for genuine full-sync failures
+  // (syncCharacterLora). Here we only log a warning.
+  const failed = results.filter((r) => !r.ok)
+  if (failed.length > 0) {
+    console.warn(
+      `[mizu-sync] ${loraId} thumbnail sync had non-critical failures (no alert): ` +
+        failed.map((f) => `${f.arch}: ${f.error}`).join('; '),
+    )
   }
   markSyncDone(loraId, results)
   return results
