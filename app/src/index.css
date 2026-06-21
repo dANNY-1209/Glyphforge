@@ -1,123 +1,92 @@
+@import url('https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap');
+
 /* =============================================== */
-/* COLOR THEME SYSTEM */
+/* GLYPHFORGE DESIGN TOKENS — arcane / glyph-tech   */
+/* See DESIGN.md. One ground, one ember accent.     */
+/* Legacy var NAMES are kept (App.css + chart hook   */
+/* reference them) but remapped to the new palette.  */
 /* =============================================== */
 
-/* Charcoal Theme (Default) */
 :root {
-  --bg-primary: #141414;
-  --bg-secondary: #1E1E1E;
-  --bg-tertiary: #282828;
-  --bg-card: linear-gradient(145deg, #1E1E1E 0%, #1a1a1a 100%);
-  --bg-card-solid: #1E1E1E;
-  --bg-hover: rgba(255, 255, 255, 0.05);
-  --bg-active: rgba(255, 255, 255, 0.08);
-  
-  --border-primary: #404040;
-  --border-secondary: #353535;
-  --border-hover: #505050;
-  --border-active: #606060;
-  
-  --text-primary: #E0E0E0;
-  --text-secondary: #909090;
-  --text-muted: #666666;
-  
-  --accent-primary: #C8C8C8;
-  --accent-secondary: #A0A0A0;
-  --accent-hover: rgba(255, 255, 255, 0.15);
-  --accent-bg: rgba(255, 255, 255, 0.08);
-  --accent-bg-hover: rgba(255, 255, 255, 0.12);
-  
-  --shadow-card: 0 10px 40px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(64, 64, 64, 0.5);
-  --shadow-hover: 0 8px 24px rgba(0, 0, 0, 0.5);
-  
-  --scrollbar-track: #1E1E1E;
-  --scrollbar-thumb: #404040;
-  --scrollbar-thumb-hover: #505050;
-  
-  /* Special colors */
-  --nsfw-pink: #e8a0b0;
-  --nsfw-pink-bg: rgba(232, 160, 176, 0.15);
-  --success-green: #4ade80;
-  --warning-orange: #fb923c;
-  --error-red: #f87171;
-  
-  /* Chart colors */
-  --chart-primary: #A0A0A0;
-  --chart-secondary: #707070;
-  --chart-tertiary: #505050;
-  --chart-grid: rgba(255, 255, 255, 0.1);
-  --chart-axis: #808080;
-  --chart-bar-1: #909090;
-  --chart-bar-2: #707070;
-  --chart-pie-1: #A0A0A0;
-  --chart-pie-2: #808080;
-  --chart-pie-3: #606060;
-  --chart-pie-4: #909090;
-  --chart-pie-5: #505050;
-  --chart-costume: #c0a090;
-  
-  /* Tooltip */
-  --tooltip-bg: rgba(30, 30, 30, 0.98);
-  --tooltip-border: rgba(80, 80, 80, 0.5);
-}
+  /* ---- Canonical tokens (prefer these in new code) ---- */
+  --gf-bg: #0b0a10;
+  --gf-surface: #131019;
+  --gf-surface-2: #1b1726;
+  --gf-line: #2a2438;
+  --gf-hairline: rgba(179, 157, 255, 0.10);
 
-/* Original Theme (Legacy Blue) */
-:root[data-theme="original"] {
-  --bg-primary: #12151c;
-  --bg-secondary: #1e222f;
-  --bg-tertiary: #181b26;
-  --bg-card: linear-gradient(145deg, #1e222f 0%, #181b26 100%);
-  --bg-card-solid: #1e222f;
-  --bg-hover: rgba(99, 130, 191, 0.1);
-  --bg-active: rgba(99, 130, 191, 0.15);
-  
-  --border-primary: rgba(99, 130, 191, 0.2);
-  --border-secondary: rgba(99, 130, 191, 0.15);
-  --border-hover: rgba(99, 130, 191, 0.3);
-  --border-active: rgba(99, 130, 191, 0.4);
-  
-  --text-primary: #e4e6eb;
-  --text-secondary: #9ca3b4;
-  --text-muted: #6b7280;
-  
-  --accent-primary: #6382bf;
-  --accent-secondary: #8ba4d0;
-  --accent-hover: rgba(99, 130, 191, 0.3);
-  --accent-bg: rgba(99, 130, 191, 0.2);
-  --accent-bg-hover: rgba(99, 130, 191, 0.3);
-  
-  --shadow-card: 0 10px 40px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(99, 130, 191, 0.1);
-  --shadow-hover: 0 8px 24px rgba(0, 0, 0, 0.4);
-  
-  --scrollbar-track: rgba(31, 35, 50, 0.5);
-  --scrollbar-thumb: rgba(99, 130, 191, 0.5);
-  --scrollbar-thumb-hover: rgba(99, 130, 191, 0.7);
-  
-  /* Special colors */
-  --nsfw-pink: #e8a0b0;
-  --nsfw-pink-bg: rgba(232, 160, 176, 0.15);
-  --success-green: #22c55e;
-  --warning-orange: #f97316;
-  --error-red: #ef4444;
-  
-  /* Chart colors */
-  --chart-primary: #6382bf;
-  --chart-secondary: #8ba4d0;
-  --chart-tertiary: #4a5f8f;
-  --chart-grid: rgba(99, 130, 191, 0.2);
-  --chart-axis: #8ba4d0;
-  --chart-bar-1: #6382bf;
-  --chart-bar-2: #8ba4d0;
-  --chart-pie-1: #6382bf;
-  --chart-pie-2: #8ba4d0;
-  --chart-pie-3: #4a5f8f;
-  --chart-pie-4: #5a7bb3;
-  --chart-pie-5: #3d4f73;
-  --chart-costume: #e07a5f;
-  
-  /* Tooltip */
-  --tooltip-bg: rgba(35, 40, 55, 0.98);
-  --tooltip-border: rgba(99, 130, 191, 0.3);
+  --gf-ember: #ff6a3d;
+  --gf-ember-press: #e2542b;
+  --gf-ember-glow: rgba(255, 106, 61, 0.30);
+  --gf-rune: #b39dff;
+
+  --gf-text: #ece8f5;
+  --gf-text-dim: #9a93ad;
+  --gf-text-faint: #5f596f;
+  --gf-r18: #e86aa0;
+  --gf-ok: #5fcf8e;
+
+  --font-sans: "Geist", system-ui, "Noto Sans TC", sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, SFMono-Regular, monospace;
+
+  --radius-1: 6px;
+  --radius-2: 10px;
+  --radius-3: 14px;
+  --focus-ring: 0 0 0 1px var(--gf-ember), 0 0 0 4px var(--gf-ember-glow);
+
+  /* ---- Legacy aliases (remapped to the new palette) ---- */
+  --bg-primary: var(--gf-bg);
+  --bg-secondary: var(--gf-surface);
+  --bg-tertiary: var(--gf-surface-2);
+  --bg-card: var(--gf-surface);          /* was 145deg gradient — now flat */
+  --bg-card-solid: var(--gf-surface);
+  --bg-hover: rgba(255, 255, 255, 0.04);
+  --bg-active: rgba(255, 106, 61, 0.10); /* ember-tinted */
+
+  --border-primary: var(--gf-line);
+  --border-secondary: #221d2e;
+  --border-hover: #3a3350;
+  --border-active: var(--gf-ember);
+
+  --text-primary: var(--gf-text);
+  --text-secondary: var(--gf-text-dim);
+  --text-muted: var(--gf-text-faint);
+
+  --accent-primary: var(--gf-ember);
+  --accent-secondary: var(--gf-ember-press); /* tonal ember (no 2-hue gradients) */
+  --accent-hover: rgba(255, 106, 61, 0.18);
+  --accent-bg: rgba(255, 106, 61, 0.10);
+  --accent-bg-hover: rgba(255, 106, 61, 0.16);
+
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.45);   /* hairline elevation, no glow */
+  --shadow-hover: 0 4px 16px rgba(0, 0, 0, 0.40);
+
+  --scrollbar-track: var(--gf-surface);
+  --scrollbar-thumb: var(--gf-line);
+  --scrollbar-thumb-hover: #3a3350;
+
+  --nsfw-pink: var(--gf-r18);
+  --nsfw-pink-bg: rgba(232, 106, 160, 0.12);
+  --success-green: var(--gf-ok);
+  --warning-orange: #e0a955;
+  --error-red: #e5604f;
+
+  --chart-primary: var(--gf-ember);
+  --chart-secondary: var(--gf-rune);
+  --chart-tertiary: #6f6786;
+  --chart-grid: var(--gf-hairline);
+  --chart-axis: var(--gf-text-dim);
+  --chart-bar-1: var(--gf-ember);
+  --chart-bar-2: var(--gf-rune);
+  --chart-pie-1: #ff6a3d;
+  --chart-pie-2: #b39dff;
+  --chart-pie-3: #5fcf8e;
+  --chart-pie-4: #e0a955;
+  --chart-pie-5: #6f6786;
+  --chart-costume: #e0a955;
+
+  --tooltip-bg: rgba(19, 16, 25, 0.98);
+  --tooltip-border: var(--gf-line);
 }
 
 /* =============================================== */
@@ -131,19 +100,25 @@
 }
 
 html {
-  background-color: var(--bg-primary, #141414);
+  background-color: var(--gf-bg);
 }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
-    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
-    sans-serif;
+  font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  background: var(--bg-primary, #141414);
+  /* faint rune dot-grid + ember forge-glow over the violet-black ground */
+  background:
+    radial-gradient(var(--gf-hairline) 1px, transparent 1px) 0 0 / 22px 22px,
+    radial-gradient(900px 420px at 88% -8%, rgba(255, 106, 61, 0.06), transparent 60%),
+    var(--gf-bg);
   background-attachment: fixed;
   min-height: 100vh;
-  color: var(--text-primary, #E0E0E0);
+  color: var(--gf-text);
+}
+
+::selection {
+  background: var(--gf-ember-glow);
 }
 
 #root {
